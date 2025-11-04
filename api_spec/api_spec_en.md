@@ -1,0 +1,568 @@
+# TEMatrix Backend API Specification
+
+**Created**: Nov 03, 2025  
+**Last Updated**: Nov 04, 2025
+
+---
+
+**Design Rationale**: "API as single source of truth" - the backend confirms what was processed, and the frontend can cache it in local state if needed but doesn't have to.
+
+---
+
+## Common Interfaces
+
+### Base Response Interface
+
+```typescript
+interface APIResponse<T = any> {
+  status: "success" | "error";
+  code: number;
+  timestamp: string; // ISO 8601 timestamp
+  apiVersion: string; // e.g., "v1.0"
+  data?: T;
+  error?: APIError;
+}
+```
+
+### Error Interface
+
+```typescript
+interface APIError {
+  type: ErrorType;
+  message: string;
+  details?: ValidationErrorDetail[];
+}
+
+interface ValidationErrorDetail {
+  field?: string;
+  message: string;
+  position?: number;
+}
+
+type ErrorType =
+  | "VALIDATION_ERROR"
+  | "AUTHENTICATION_ERROR"
+  | "AUTHORIZATION_ERROR"
+  | "NOT_FOUND"
+  | "QUERY_EXECUTION_ERROR"
+  | "DATABASE_ERROR"
+  | "AI_SERVICE_ERROR"
+  | "EXPORT_ERROR"
+  | "TIMEOUT_ERROR"
+  | "RATE_LIMIT_ERROR"
+  | "INTERNAL_SERVER_ERROR";
+```
+
+---
+
+## Data Model Interfaces
+
+### Patent Interface
+
+```typescript
+interface Patent {
+  id: string;
+  title: string;
+  inventor: string;
+  patentHolder: string;
+  filedYear: number;
+  priorityYear?: number; // Data may not be available
+  publicationYear?: number; // Data may not be available
+  grantYear?: number; // Data may not be available
+  cpc: string[];
+  keywords: string | string[];
+  concepts: string;
+  link: string;
+}
+```
+
+### Paper Interface
+
+```typescript
+interface Paper {
+  id: string;
+  title: string;
+  author: string;
+  journal: string;
+  publicationYear: number;
+  citations: number;
+  cpc: string[];
+  concepts: string;
+  link: string;
+}
+```
+
+---
+
+## Authentication
+
+### Login Request/Response
+
+```typescript
+interface LoginRequest {
+  username: string;
+  password: string;
+}
+
+interface LoginResponse {
+  sessionToken: string;
+  userId: string;
+  username: string;
+  expiresIn: number; // seconds
+}
+
+interface LogoutResponse {
+  message: string;
+}
+```
+
+**Endpoints:**
+
+- **`POST /auth/login`**: `LoginRequest` → `APIResponse<LoginResponse>`
+- **`POST /auth/logout`**: Headers: `Authorization: Bearer <token>` → `APIResponse<LogoutResponse>`
+
+---
+
+## Step 0: Query Builder
+
+### Keyword Suggestions Request/Response
+
+```typescript
+interface KeywordSuggestionsRequest {
+  seed_keyword: string;
+}
+
+interface KeywordSuggestionsResponse {
+  keyword: string;
+  suggestions: string[];
+}
+```
+
+**Endpoint:**
+
+- **`GET /query-builder/keyword-suggestions`**: `KeywordSuggestionsRequest` → `APIResponse<KeywordSuggestionsResponse>`
+
+## Step 1: Patent & Paper Selection
+
+```typescript
+interface SearchExecutionRequest {
+  caseName: string;
+  query: string;
+  yearRange?: YearRange; // By default, it's past 5 years
+}
+
+interface YearRange {
+  min: number;
+  max: number;
+}
+
+interface SearchExecutionResponse {
+  caseId: string;
+  caseName: string;
+  query: string;
+  patents: Patent[];
+  papers: Paper[];
+  filterOptions: FilterOptions;
+  sortingOptions: string[];
+  executedAt: string;
+}
+
+interface FilterOptions {
+  patentFilterOptions: Record<string, FilterOption>;
+  paperFilterOptions: Record<string, FilterOption>;
+}
+
+type FilterOption = MultiselectFilter | RangeFilter;
+
+interface MultiselectFilter {
+  type: "multiselect";
+  options: FilterValue[];
+}
+
+interface RangeFilter {
+  type: "range";
+  min: number;
+  max: number;
+  selectedMin: number;
+  selectedMax: number;
+}
+
+interface FilterValue {
+  value: string;
+  count: number;
+  active: boolean;
+}
+```
+
+**Endpoints:**
+
+- **`POST /search/execute`**: `SearchExecutionRequest` → `APIResponse<SearchExecutionResponse>`
+
+## Step 2: Matrix Dimension Specification
+
+```typescript
+interface MatrixSpecInitRequest {
+  caseId: string;
+  selectedPatentIds: string[];
+  selectedPaperIds: string[];
+}
+
+interface MatrixSpecInitResponse {
+  caseId: string;
+  caseName: string;
+  query: string;
+  efficacySuggestions: string[];
+  technologySuggestions: string[];
+  generatedAtTimestamp: string;
+}
+```
+
+**Endpoint:**
+
+- **`POST /matrix/initialize-specification`**: `MatrixSpecInitRequest` → `APIResponse<MatrixSpecInitResponse>`
+
+## Step 3: Matrix Generation
+
+```typescript
+interface MatrixGenerationRequest {
+  caseId: string;
+  efficacyLabels: string[];
+  technologyLabels: string[];
+}
+
+interface MatrixGenerationResponse {
+  caseId: string;
+  efficacyLabels: string[];
+  technologyLabels: string[];
+  cells: MatrixCell[];
+  generatedAt: string;
+}
+
+interface MatrixCell {
+  efficacyIndex: number;
+  technologyIndex: number;
+  patentCount: number;
+  paperCount: number;
+  patentIds: string[];
+  paperIds: string[];
+}
+
+interface MatrixCellDetailsRequest {
+  caseId: string;
+  efficacyIndex: number;
+  technologyIndex: number;
+}
+
+interface MatrixCellDetailsResponse {
+  cell: {
+    efficacyLabel: string;
+    technologyLabel: string;
+    patents: Patent[]; // Full patent details
+    papers: Paper[]; // Full paper details
+    patentCount: number;
+    paperCount: number;
+  };
+}
+```
+
+**Endpoints:**
+
+- **`POST /matrix/generate`**: `MatrixGenerationRequest` → `APIResponse<MatrixGenerationResponse>`
+- **`GET /matrix/{caseId}/cell/{efficacyIndex}/{technologyIndex}`**: → `APIResponse<MatrixCellDetailsResponse>`
+
+### Matrix View Settings
+
+To save the "鴻海臨界" and "藍海臨界" preferences.
+
+```typescript
+interface MatrixViewSettingsSaveRequest {
+  caseId: string;
+  settings: {
+    [key: "blue_ocean_threshold" | "red_ocean_threshold"]: number; // Value should be of `double` type.
+  };
+}
+
+interface MatrixViewSettingsSaveResponse {
+  // Nothing special, could adopt the base response interface
+}
+```
+
+**Endpoint:**
+
+- **`POST /matrix/view-settings`**: `MatrixViewSettingsSaveRequest` → `APIResponse<MatrixViewSettingsSaveResponse>`
+
+## Step 4: Matrix Export & Review
+
+### Matrix Export Request
+
+```typescript
+interface MatrixExportRequest {
+  caseId: string;
+}
+```
+
+**Endpoint:**
+
+- **`POST /matrix/{caseId}/export`**: `MatrixExportRequest` → Binary Excel file with `Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`
+
+### Matrix Sharing & Viewing
+
+```typescript
+interface MatrixShareRequest {
+  caseId: string;
+  userId: string; // To allow access to authenticated users
+}
+
+interface MatrixShareResponse {
+  creatorId: string; // To check if the viewer can change the view settings
+  ...MatrixGenerationResponse;
+}
+```
+
+---
+
+## Progress & Session Management
+
+```typescript
+interface ProgressSaveRequest {
+  caseId: string;
+  stepCode: StepCode;
+  progress: UserProgressData;
+}
+
+interface StepCode {
+  //   QUERY_BUILDER: "query_builder";
+  SELECTION: "selection";
+  MATRIX_SPECIFICATION: "matrix_specification";
+  // MATRIX_GENERATION: "matrix_generation"; // Final state - read-only
+}
+
+interface UserProgressData {
+  patentsPapersSelection?: SelectionProgress;
+  matrixSpecification?: MatrixSpecProgress;
+}
+
+interface SelectionProgress {
+  selectedPatentIds: string[];
+  selectedPaperIds: string[];
+  currentTabIndex: number;
+  filters: FilterOptions[];
+  sorting: SortSettings[];
+}
+
+interface SortSettings {
+  index?: number;
+  field: string;
+  order: "ASC" | "DESC";
+  active: boolean;
+}
+
+interface MatrixSpecProgress {
+  selectedEfficacyLabels: string[];
+  selectedTechnologyLabels: string[];
+}
+
+interface ProgressRetrievalResponse {
+  caseId: string;
+  caseName: string;
+  currentStepCode: StepCode;
+  progress: UserProgressData;
+  lastModifiedAt: string;
+}
+```
+
+**Endpoints:**
+
+- **`POST /user/progress`**: `ProgressSaveRequest` → `APIResponse<ProgressSaveResponse>`
+- **`GET /user/progress/{caseId}`**: → `APIResponse<ProgressRetrievalResponse>`
+
+---
+
+## Case Management
+
+### Getting Case List
+
+```typescript
+interface CasesListResponse {
+  cases: CaseSummary[];
+}
+
+interface CaseSummary {
+  caseId: string;
+  caseName: string;
+  createdAt: string;
+  lastModifiedAt: string;
+  status: "in_progress" | "completed";
+}
+
+interface CaseRenameRequest {
+  newName: string;
+}
+```
+
+**Endpoints:**
+
+- **`GET /user/cases/{userId}`**: Query params → `APIResponse<CasesListResponse>`
+- **`POST /user/cases/{caseId}/rename`**: `CaseRenameRequest` → `APIResponse<{}>`
+- **`DELETE /user/cases/{caseId}`**: → `APIResponse<{}>`
+
+### Case Rename Request/Response
+
+Renames an existing case.
+
+```typescript
+interface CaseRenameRequest {
+  newName: string;
+}
+
+interface CaseRenameResponse {
+  ...APIResponse; // Nothing special, could adopt the base response interface
+}
+```
+
+**Endpoint:**
+
+- **`POST /user/cases/{caseId}/rename`** - `CaseRenameRequest` → `APIResponse<CaseRenameResponse>`
+
+### Case Deletion Response
+
+Deletes a case and all associated data.
+
+```typescript
+interface CaseDeletionResponse {
+  ...APIResponse; // Nothing special, could adopt the base response interface}
+```
+
+**Endpoint:**
+
+- **`DELETE /user/cases/{caseId}`** - → `APIResponse<CaseDeletionResponse>`
+
+---
+
+## Authentication Headers
+
+All authenticated endpoints require:
+
+```
+Authorization: Bearer <sessionToken>
+Content-Type: application/json
+```
+
+Unauthenticated endpoints:
+
+- `POST /auth/login`
+
+---
+
+## Error Handling
+
+| Code | Meaning               | Common Use Cases                      |
+| ---- | --------------------- | ------------------------------------- |
+| 200  | OK                    | Successful GET/PUT/PATCH/DELETE       |
+| 201  | Created               | Successful POST for resource creation |
+| 202  | Accepted              | Request accepted for async processing |
+| 400  | Bad Request           | Invalid parameters, malformed request |
+| 401  | Unauthorized          | Missing/invalid session token         |
+| 403  | Forbidden             | Insufficient permissions              |
+| 404  | Not Found             | Resource not found                    |
+| 408  | Request Timeout       | Query/AI generation timeout           |
+| 429  | Too Many Requests     | Rate limit exceeded                   |
+| 500  | Internal Server Error | Unexpected backend error              |
+
+---
+
+## Rate Limiting
+
+**Suggested Limits:**
+
+| Endpoint                                | Limit | Window |
+| --------------------------------------- | ----- | ------ |
+| `POST /search/execute`                  | 30    | 1 hour |
+| `POST /matrix/initialize-specification` | 20    | 1 hour |
+| `POST /matrix/generate`                 | 10    | 1 hour |
+| `POST /matrix/export`                   | 50    | 1 hour |
+| Default                                 | 1000  | 1 hour |
+
+**Response Headers:**
+
+```
+X-RateLimit-Limit: <limit>
+X-RateLimit-Remaining: <remaining>
+X-RateLimit-Reset: <timestamp>
+```
+
+---
+
+## Timeout Expectations
+
+| Endpoint                                | Timeout |
+| --------------------------------------- | ------- |
+| `POST /search/execute`                  | 30-60s  |
+| `POST /matrix/initialize-specification` | 15-30s  |
+| `POST /matrix/generate`                 | 30-60s  |
+| `POST /matrix/export`                   | 30-60s  |
+| Other endpoints                         | 5-10s   |
+
+---
+
+## Future Enhancements (Phase 2)
+
+### Matrix Sharing & Editing
+
+```typescript
+// Matrix Sharing & Viewing (Future Enhancement - Not MVP)
+// Planned for Phase 2 (Feb 2026+)
+
+interface MatrixShareRequest {
+  caseId: string;
+  sharedWithUserId: string;
+  permissions: "view" | "edit"; // "view" by default
+}
+
+interface MatrixShareResponse {
+  shareId: string;
+  caseId: string;
+  creatorId: string;
+  sharedWithUserId: string;
+  permissions: string;
+  sharedAt: string; // ISO 8601
+}
+```
+
+### Async processing for long operations
+
+For MVP, synchronous is fine, but consider async for:
+
+- Large search results (1000+ patents/papers)
+- Complex matrix generation
+- Export to Excel
+
+```typescript
+// Future enhancement:
+interface AsyncJobResponse {
+  jobId: string;
+  status: "queued" | "processing" | "completed" | "failed";
+  progress?: number; // 0-100
+  resultUrl?: string; // Available when status === "completed"
+  createdAt: string;
+  completedAt?: string;
+}
+
+// Poll for results:
+GET /jobs/{jobId} → AsyncJobResponse
+```
+
+### Optional Caching Headers
+
+```typescript
+// For stable data that can be cached:
+GET /user/cases
+  Cache-Control: private, max-age=300  // 5 minutes
+
+GET /matrix/{caseId}
+  Cache-Control: private, max-age=3600  // 1 hour
+
+// For volatile data:
+POST /search/execute
+  Cache-Control: no-cache
+```
