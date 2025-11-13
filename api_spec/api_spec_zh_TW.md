@@ -146,7 +146,7 @@ interface KeywordSuggestionsResponse {
 
 ```typescript
 interface SearchExecutionRequest {
-  caseName: string;
+  projectName: string;
   query: string;
   yearRange?: YearRange; // 預設為近五年
 }
@@ -157,8 +157,8 @@ interface YearRange {
 }
 
 interface SearchExecutionResponse {
-  caseId: string;
-  caseName: string;
+  projectId: string;
+  projectName: string;
   query: string;
   patents: Patent[];
   papers: Paper[];
@@ -202,18 +202,17 @@ interface FilterValue {
 
 ```typescript
 interface MatrixSpecInitRequest {
-  caseId: string;
+  projectId: string;
   selectedPatentIds: string[];
   selectedPaperIds: string[];
 }
 
 interface MatrixSpecInitResponse {
-  caseId: string;
-  caseName: string;
+  projectId: string;
+  projectName: string;
   query: string;
-  efficacySuggestions: string[];
+  functionSuggestions: string[];
   technologySuggestions: string[];
-  generatedAtTimestamp: string;
 }
 ```
 
@@ -225,21 +224,23 @@ interface MatrixSpecInitResponse {
 
 ```typescript
 interface MatrixGenerationRequest {
-  caseId: string;
-  efficacyLabels: string[];
+  projectId: string;
+  functionLabels: string[];
   technologyLabels: string[];
 }
 
-interface MatrixGenerationResponse {
-  caseId: string;
-  efficacyLabels: string[];
-  technologyLabels: string[];
-  cells: MatrixCell[];
-  generatedAt: string;
+interface MatrixGenerationResponse extends APIResponse {
+  data: {
+    projectId: string;
+    functionLabels: string[];
+    technologyLabels: string[];
+    cells: MatrixCell[];
+    createdAt: string;
+  };
 }
 
 interface MatrixCell {
-  efficacyIndex: number;
+  functionIndex: number;
   technologyIndex: number;
   patentCount: number;
   paperCount: number;
@@ -248,14 +249,14 @@ interface MatrixCell {
 }
 
 interface MatrixCellDetailsRequest {
-  caseId: string;
-  efficacyIndex: number;
+  projectId: string;
+  functionIndex: number;
   technologyIndex: number;
 }
 
 interface MatrixCellDetailsResponse {
   cell: {
-    efficacyLabel: string;
+    functionLabel: string;
     technologyLabel: string;
     patents: Patent[]; // 完整專利資料
     papers: Paper[]; // 完整論文資料
@@ -268,7 +269,7 @@ interface MatrixCellDetailsResponse {
 **端點：**
 
 - **`POST /matrix/generate`**：`MatrixGenerationRequest` → `APIResponse<MatrixGenerationResponse>`
-- **`GET /matrix/{caseId}/cell/{efficacyIndex}/{technologyIndex}`**：→ `APIResponse<MatrixCellDetailsResponse>`
+<!-- - **`GET /matrix/{projectId}/cell/{functionIndex}/{technologyIndex}`**：→ `APIResponse<MatrixCellDetailsResponse>` // We no longer need this, as Front-end will store the data. -->
 
 ### 矩陣檢視設定
 
@@ -276,7 +277,7 @@ interface MatrixCellDetailsResponse {
 
 ```typescript
 interface MatrixViewSettingsSaveRequest {
-  caseId: string;
+  projectId: string;
   settings: {
     [key: "blue_ocean_threshold" | "red_ocean_threshold"]: number; // 值需為 double 型態
   };
@@ -297,19 +298,19 @@ interface MatrixViewSettingsSaveResponse {
 
 ```typescript
 interface MatrixExportRequest {
-  caseId: string;
+  projectId: string;
 }
 ```
 
 **端點：**
 
-- **`POST /matrix/{caseId}/export`**：`MatrixExportRequest` → 二進位 Excel 檔，`Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`
+- **`POST /matrix/{projectId}/export`**：`MatrixExportRequest` → 二進位 Excel 檔，`Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`
 
 ### 矩陣分享與檢視
 
 ```typescript
 interface MatrixShareRequest {
-  caseId: string;
+  projectId: string;
   userId: string; // 允許已驗證用戶存取
 }
 
@@ -325,7 +326,7 @@ interface MatrixShareResponse {
 
 ```typescript
 interface ProgressSaveRequest {
-  caseId: string;
+  projectId: string;
   stepCode: StepCode;
   progress: UserProgressData;
 }
@@ -358,13 +359,13 @@ interface SortSettings {
 }
 
 interface MatrixSpecProgress {
-  selectedEfficacyLabels: string[];
+  selectedFunctionLabels: string[];
   selectedTechnologyLabels: string[];
 }
 
 interface ProgressRetrievalResponse {
-  caseId: string;
-  caseName: string;
+  projectId: string;
+  projectName: string;
   currentStepCode: StepCode;
   progress: UserProgressData;
   lastModifiedAt: string;
@@ -374,68 +375,103 @@ interface ProgressRetrievalResponse {
 **端點：**
 
 - **`POST /user/progress`**：`ProgressSaveRequest` → `APIResponse<ProgressSaveResponse>`
-- **`GET /user/progress/{caseId}`**：→ `APIResponse<ProgressRetrievalResponse>`
+- **`GET /user/progress/{projectId}`**：→ `APIResponse<ProgressRetrievalResponse>`
 
 ---
 
-## 案例管理
+## 專案管理
 
-### 取得案例列表
+### 取得專案列表
 
 ```typescript
-interface CasesListResponse {
-  cases: CaseSummary[];
+interface ProjectsListResponse {
+  projects: ProjectSummary[];
 }
 
-interface CaseSummary {
-  caseId: string;
-  caseName: string;
+interface ProjectSummary {
+  projectId: string;
+  projectName: string;
   createdAt: string;
   lastModifiedAt: string;
   status: "in_progress" | "completed";
 }
 
-interface CaseRenameRequest {
+interface ProjectRenameRequest {
   newName: string;
 }
 ```
 
 **端點：**
 
-- **`GET /user/cases/{userId}`**：查詢參數 → `APIResponse<CasesListResponse>`
-- **`POST /user/cases/{caseId}/rename`**：`CaseRenameRequest` → `APIResponse<{}`>
-- **`DELETE /user/cases/{caseId}`**：→ `APIResponse<{}`>
+- **`GET /user/projects/{userId}`**：查詢參數 → `APIResponse<ProjectsListResponse>`
+- **`POST /user/projects/{projectId}/rename`**：`ProjectRenameRequest` → `APIResponse<{}`>
+- **`DELETE /user/projects/{projectId}`**：→ `APIResponse<{}`>
 
-### 案例重新命名請求/回應
-
-重新命名現有案例。
+### 檢閱個別專案 (歷史)
 
 ```typescript
-interface CaseRenameRequest {
+interface ProjectViewResponse extends APIResponse {
+  // Only completed projects are relevant for viewing
+  data: {
+    projectId: string;
+    projectName: string;
+    query: string;
+    functionLabels: string[];
+    technologyLabels: string[];
+    cells: ProjectViewMatrixCell[];
+    settings: {
+      [key: "blue_ocean_threshold" | "red_ocean_threshold"]: number; // Value should be of `double` type.
+    };
+    createdAt: string;
+  };
+}
+
+interface ProjectViewMatrixCell {
+  functionIndex: number;
+  technologyIndex: number;
+  patentCount: number;
+  paperCount: number;
+  patents: Patent[];
+  papers: Paper[];
+}
+```
+
+> 註：任何持有該 專案連結 並已登入的使用者皆可檢視該專案詳細資訊。
+
+**端點：**
+
+- **`GET /projects/{projectId}`** - → `APIResponse<ProjectViewResponse>`
+
+### 專案重新命名請求/回應
+
+重新命名現有專案。
+
+```typescript
+interface ProjectRenameRequest {
   newName: string;
 }
 
-interface CaseRenameResponse {
+interface ProjectRenameResponse {
   ...APIResponse; // 無特殊內容，可採用基礎回應介面
 }
 ```
 
 **端點：**
 
-- **`POST /user/cases/{caseId}/rename`** - `CaseRenameRequest` → `APIResponse<CaseRenameResponse>`
+- **`POST /user/projects/{projectId}/rename`** - `ProjectRenameRequest` → `APIResponse<ProjectRenameResponse>`
 
-### 案例刪除回應
+### 專案刪除回應
 
-刪除案例及所有相關資料。
+刪除專案及所有相關資料。
 
 ```typescript
-interface CaseDeletionResponse {
+interface ProjectDeletionResponse {
   ...APIResponse; // 無特殊內容，可採用基礎回應介面}
 ```
 
 **端點：**
 
-- **`DELETE /user/cases/{caseId}`** - → `APIResponse<CaseDeletionResponse>`
+- **`DELETE /user/projects/{projectId}`** - → `APIResponse<ProjectDeletionResponse>`
 
 ---
 
@@ -514,14 +550,14 @@ X-RateLimit-Reset: <timestamp>
 // 規劃於第二階段（2026年2月以後）
 
 interface MatrixShareRequest {
-  caseId: string;
+  projectId: string;
   sharedWithUserId: string;
   permissions: "view" | "edit"; // 預設為 "view"
 }
 
 interface MatrixShareResponse {
   shareId: string;
-  caseId: string;
+  projectId: string;
   creatorId: string;
   sharedWithUserId: string;
   permissions: string;
@@ -556,10 +592,10 @@ GET /jobs/{jobId} → AsyncJobResponse
 
 ```typescript
 // 穩定資料可快取：
-GET /user/cases
+GET /user/projects
   Cache-Control: private, max-age=300  // 5 分鐘
 
-GET /matrix/{caseId}
+GET /matrix/{projectId}
   Cache-Control: private, max-age=3600  // 1 小時
 
 // 易變資料：

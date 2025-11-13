@@ -146,7 +146,7 @@ interface KeywordSuggestionsResponse {
 
 ```typescript
 interface SearchExecutionRequest {
-  caseName: string;
+  projectName: string;
   query: string;
   yearRange?: YearRange; // By default, it's past 5 years
 }
@@ -157,8 +157,8 @@ interface YearRange {
 }
 
 interface SearchExecutionResponse {
-  caseId: string;
-  caseName: string;
+  projectId: string;
+  projectName: string;
   query: string;
   patents: Patent[];
   papers: Paper[];
@@ -202,18 +202,17 @@ interface FilterValue {
 
 ```typescript
 interface MatrixSpecInitRequest {
-  caseId: string;
+  projectId: string;
   selectedPatentIds: string[];
   selectedPaperIds: string[];
 }
 
 interface MatrixSpecInitResponse {
-  caseId: string;
-  caseName: string;
+  projectId: string;
+  projectName: string;
   query: string;
-  efficacySuggestions: string[];
+  functionSuggestions: string[];
   technologySuggestions: string[];
-  generatedAtTimestamp: string;
 }
 ```
 
@@ -225,21 +224,23 @@ interface MatrixSpecInitResponse {
 
 ```typescript
 interface MatrixGenerationRequest {
-  caseId: string;
-  efficacyLabels: string[];
+  projectId: string;
+  functionLabels: string[];
   technologyLabels: string[];
 }
 
-interface MatrixGenerationResponse {
-  caseId: string;
-  efficacyLabels: string[];
-  technologyLabels: string[];
-  cells: MatrixCell[];
-  generatedAt: string;
+interface MatrixGenerationResponse extends APIResponse {
+  data: {
+    projectId: string;
+    functionLabels: string[];
+    technologyLabels: string[];
+    cells: MatrixCell[];
+    createdAt: string;
+  };
 }
 
 interface MatrixCell {
-  efficacyIndex: number;
+  functionIndex: number;
   technologyIndex: number;
   patentCount: number;
   paperCount: number;
@@ -248,14 +249,14 @@ interface MatrixCell {
 }
 
 interface MatrixCellDetailsRequest {
-  caseId: string;
-  efficacyIndex: number;
+  projectId: string;
+  functionIndex: number;
   technologyIndex: number;
 }
 
 interface MatrixCellDetailsResponse {
   cell: {
-    efficacyLabel: string;
+    functionLabel: string;
     technologyLabel: string;
     patents: Patent[]; // Full patent details
     papers: Paper[]; // Full paper details
@@ -268,7 +269,7 @@ interface MatrixCellDetailsResponse {
 **Endpoints:**
 
 - **`POST /matrix/generate`**: `MatrixGenerationRequest` → `APIResponse<MatrixGenerationResponse>`
-- **`GET /matrix/{caseId}/cell/{efficacyIndex}/{technologyIndex}`**: → `APIResponse<MatrixCellDetailsResponse>`
+<!-- - **`GET /matrix/{projectId}/cell/{functionIndex}/{technologyIndex}`**: → `APIResponse<MatrixCellDetailsResponse>` // We no longer need this, as Front-end will store the data. -->
 
 ### Matrix View Settings
 
@@ -276,7 +277,7 @@ To save the "鴻海臨界" and "藍海臨界" preferences.
 
 ```typescript
 interface MatrixViewSettingsSaveRequest {
-  caseId: string;
+  projectId: string;
   settings: {
     [key: "blue_ocean_threshold" | "red_ocean_threshold"]: number; // Value should be of `double` type.
   };
@@ -297,19 +298,19 @@ interface MatrixViewSettingsSaveResponse {
 
 ```typescript
 interface MatrixExportRequest {
-  caseId: string;
+  projectId: string;
 }
 ```
 
 **Endpoint:**
 
-- **`POST /matrix/{caseId}/export`**: `MatrixExportRequest` → Binary Excel file with `Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`
+- **`POST /matrix/{projectId}/export`**: `MatrixExportRequest` → Binary Excel file with `Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`
 
 ### Matrix Sharing & Viewing
 
 ```typescript
 interface MatrixShareRequest {
-  caseId: string;
+  projectId: string;
   userId: string; // To allow access to authenticated users
 }
 
@@ -325,7 +326,7 @@ interface MatrixShareResponse {
 
 ```typescript
 interface ProgressSaveRequest {
-  caseId: string;
+  projectId: string;
   stepCode: StepCode;
   progress: UserProgressData;
 }
@@ -358,13 +359,13 @@ interface SortSettings {
 }
 
 interface MatrixSpecProgress {
-  selectedEfficacyLabels: string[];
+  selectedFunctionLabels: string[];
   selectedTechnologyLabels: string[];
 }
 
 interface ProgressRetrievalResponse {
-  caseId: string;
-  caseName: string;
+  projectId: string;
+  projectName: string;
   currentStepCode: StepCode;
   progress: UserProgressData;
   lastModifiedAt: string;
@@ -374,68 +375,103 @@ interface ProgressRetrievalResponse {
 **Endpoints:**
 
 - **`POST /user/progress`**: `ProgressSaveRequest` → `APIResponse<ProgressSaveResponse>`
-- **`GET /user/progress/{caseId}`**: → `APIResponse<ProgressRetrievalResponse>`
+- **`GET /user/progress/{projectId}`**: → `APIResponse<ProgressRetrievalResponse>`
 
 ---
 
-## Case Management
+## Project Management
 
-### Getting Case List
+### Getting Project List
 
 ```typescript
-interface CasesListResponse {
-  cases: CaseSummary[];
+interface ProjectsListResponse {
+  projects: ProjectSummary[];
 }
 
-interface CaseSummary {
-  caseId: string;
-  caseName: string;
+interface ProjectSummary {
+  projectId: string;
+  projectName: string;
   createdAt: string;
   lastModifiedAt: string;
   status: "in_progress" | "completed";
 }
 
-interface CaseRenameRequest {
+interface ProjectRenameRequest {
   newName: string;
 }
 ```
 
 **Endpoints:**
 
-- **`GET /user/cases/{userId}`**: Query params → `APIResponse<CasesListResponse>`
-- **`POST /user/cases/{caseId}/rename`**: `CaseRenameRequest` → `APIResponse<{}>`
-- **`DELETE /user/cases/{caseId}`**: → `APIResponse<{}>`
+- **`GET /user/projects/{userId}`**: Query params → `APIResponse<ProjectsListResponse>`
+- **`POST /user/projects/{projectId}/rename`**: `ProjectRenameRequest` → `APIResponse<{}>`
+- **`DELETE /user/projects/{projectId}`**: → `APIResponse<{}>`
 
-### Case Rename Request/Response
-
-Renames an existing case.
+### Reviewing Individual Projects (History)
 
 ```typescript
-interface CaseRenameRequest {
+interface ProjectViewResponse extends APIResponse {
+  // Only completed projects are relevant for viewing
+  data: {
+    projectId: string;
+    projectName: string;
+    query: string;
+    functionLabels: string[];
+    technologyLabels: string[];
+    cells: ProjectViewMatrixCell[];
+    settings: {
+      [key: "blue_ocean_threshold" | "red_ocean_threshold"]: number; // Value should be of `double` type.
+    };
+    createdAt: string;
+  };
+}
+
+interface ProjectViewMatrixCell {
+  functionIndex: number;
+  technologyIndex: number;
+  patentCount: number;
+  paperCount: number;
+  patents: Patent[];
+  papers: Paper[];
+}
+```
+
+> Note: Any "logged in" user with the project link can view the project details.
+
+**Endpoint:**
+
+- **`GET /projects/{projectId}`** - → `APIResponse<ProjectViewResponse>`
+
+### Project Rename Request/Response
+
+Renames an existing project.
+
+```typescript
+interface ProjectRenameRequest {
   newName: string;
 }
 
-interface CaseRenameResponse {
+interface ProjectRenameResponse {
   ...APIResponse; // Nothing special, could adopt the base response interface
 }
 ```
 
 **Endpoint:**
 
-- **`POST /user/cases/{caseId}/rename`** - `CaseRenameRequest` → `APIResponse<CaseRenameResponse>`
+- **`POST /user/projects/{projectId}/rename`** - `ProjectRenameRequest` → `APIResponse<ProjectRenameResponse>`
 
-### Case Deletion Response
+### Project Deletion Response
 
-Deletes a case and all associated data.
+Deletes a project and all associated data.
 
 ```typescript
-interface CaseDeletionResponse {
+interface ProjectDeletionResponse {
   ...APIResponse; // Nothing special, could adopt the base response interface}
 ```
 
 **Endpoint:**
 
-- **`DELETE /user/cases/{caseId}`** - → `APIResponse<CaseDeletionResponse>`
+- **`DELETE /user/projects/{projectId}`** - → `APIResponse<ProjectDeletionResponse>`
 
 ---
 
@@ -456,7 +492,7 @@ Unauthenticated endpoints:
 
 ## Error Handling
 
-| Code | Meaning               | Common Use Cases                      |
+| Code | Meaning               | Common Use Projects                   |
 | ---- | --------------------- | ------------------------------------- |
 | 200  | OK                    | Successful GET/PUT/PATCH/DELETE       |
 | 201  | Created               | Successful POST for resource creation |
@@ -514,14 +550,14 @@ X-RateLimit-Reset: <timestamp>
 // Planned for Phase 2 (Feb 2026+)
 
 interface MatrixShareRequest {
-  caseId: string;
+  projectId: string;
   sharedWithUserId: string;
   permissions: "view" | "edit"; // "view" by default
 }
 
 interface MatrixShareResponse {
   shareId: string;
-  caseId: string;
+  projectId: string;
   creatorId: string;
   sharedWithUserId: string;
   permissions: string;
@@ -556,10 +592,10 @@ GET /jobs/{jobId} → AsyncJobResponse
 
 ```typescript
 // For stable data that can be cached:
-GET /user/cases
+GET /user/projects
   Cache-Control: private, max-age=300  // 5 minutes
 
-GET /matrix/{caseId}
+GET /matrix/{projectId}
   Cache-Control: private, max-age=3600  // 1 hour
 
 // For volatile data:
