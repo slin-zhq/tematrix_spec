@@ -1,11 +1,93 @@
 # TEMatrix Backend API Specification
 
 **Created**: Nov 03, 2025  
-**Last Updated**: Nov 04, 2025
+**Last Updated**: Nov 17, 2025
 
 ---
 
 **Design Rationale**: "API as single source of truth" - the backend confirms what was processed, and the frontend can cache it in local state if needed but doesn't have to.
+
+---
+
+## Resources & Endpoints
+
+Base URL: `/api/v1`
+
+In line with REST best practices, the API is organized around key resources that map to user flows in the app.
+
+### Resources:
+
+- `users`: Currently only for authentication, as a user has `username` and `password`.
+- `sessions`: For managing user sessions (login/logout).
+- `projects`: Each project represents a workflow – `Build query` -> `Select patents and papers` -> `Specify matrix dimensions` -> `Generate and finalize matrix`, etc.
+
+### Endpoints:
+
+**Authentication:**
+
+- `POST /sessions`: User login, returns session token.
+- `DELETE /sessions`: User logout, invalidates session token.
+
+**Project Workflow:**
+
+Step 0. Build query
+
+- `GET /query-builder/keyword-suggestions`: Get AI keyword suggestions based on seed keyword.
+  - Request param: `seed_keyword`
+  - Response: List of suggested keywords.
+- `POST /projects`: Executing a search is equivalent to creating a new project.
+  - Request body includes the boolean query built by user, and user ID from session.
+  - Response includes the project ID and search results (patents and papers).
+
+Step 1. Select patents and papers
+
+- `PATCH /projects/{projectId}/selections`: Save selected patents and papers for the next step.
+
+  - Request body includes the selected patent and paper IDs.
+  - Response includes save confirmation, and pre-generated AI suggestions for matrix dimensions. This action is synchronous for our use case. For bigger datasets, we consider making this asynchronous with a job resource.
+
+<!-- - `PATCH /projects/{projectId}`: Confirm selections (advance project state and optionally trigger matrix spec suggestions).
+  - Request body includes ids of selected patents and papers.
+  - Response includes AI suggestions for matrix dimensions. -->
+
+Step 2. Specify matrix dimensions
+
+- `PATCH /projects/{projectId}/matrix-specification`: Save/update matrix dimensions. Generate matrix based on selected patents/papers and specified dimensions.
+  - Request body includes function and technology labels.
+  - Response includes generated matrix data.
+
+Step 3. Save/finalize project and export matrix
+
+- `PATCH /projects/{projectId}/status`: Finalize (irreversible). Matrix can be shared only after finalization. Shared matrix can be viewed by anyone using the project link.
+  - Request body includes final status.
+  - Response includes confirmation of finalization.
+- `GET /projects/{projectId}/export`: Export the matrix as an Excel file.
+
+**User progress management:**
+
+- `POST /users/{userId}/progress/{projectId}`: Save user progress at a specific step in the project workflow.
+- `GET /users/{userId}/progress/{projectId}`: Retrieve saved progress for a specific project.
+
+**Matrix sharing and view settings management:**
+
+- `GET /projects/{projectId}/share`: Share the matrix with others via a link. Anyone with the link can view the matrix.
+- `GET /projects/{projectId}`: View (shared) matrix. Non-finalized projects cannot be shared/viewed.
+- `POST /projects/{projectId}/view-settings`: Anyone can have their own settings (blue/red ocean threshold). By default, use the creator's settings. Creator's action is treated the same as others, but they can change the default settings for new viewers.
+
+**Projects/searches management:**
+
+- `GET /users/{userId}/projects`: Get list of user's projects (searches).
+- `GET /users/me/projects`: Get list of current logged-in user's projects (searches).
+- `PATCH /users/{userId}/projects/{projectId}`: Rename a project.
+- `DELETE /users/{userId}/projects/{projectId}`: Delete a project.
+
+**Notes:**
+
+> To clear confusion, when user continues an open project, we load the saved progress.
+> When user moves forward to next step, we use `PATCH` end points to update the project state and data.
+> When user reverts to previous step and make changes, if they choose to move forward again, we overwrite the project state and data with new inputs, using `PATCH` end points.
+
+// [TODO]: To resolve `PATCH` ambiguity, right now, there's collision with saving progress and moving to the next step. We can consider adding a query param like `?advance=true` to indicate moving forward to next step.
 
 ---
 
@@ -118,8 +200,8 @@ interface LogoutResponse {
 
 **Endpoints:**
 
-- **`POST /auth/login`**: `LoginRequest` → `APIResponse<LoginResponse>`
-- **`POST /auth/logout`**: Headers: `Authorization: Bearer <token>` → `APIResponse<LogoutResponse>`
+- **`POST /sessions`**: `LoginRequest` → `APIResponse<LoginResponse>`
+- **`DELETE /sessions`**: Headers: `Authorization: Bearer <token>` → `APIResponse<LogoutResponse>`
 
 ---
 
@@ -148,7 +230,7 @@ interface KeywordSuggestionsResponse {
 interface SearchExecutionRequest {
   projectName: string;
   query: string;
-  yearRange?: YearRange; // By default, it's past 5 years
+  yearRange?: YearRange; // 預設為近五年
 }
 
 interface YearRange {
@@ -163,40 +245,72 @@ interface SearchExecutionResponse {
   patents: Patent[];
   papers: Paper[];
   filterOptions: FilterOptions;
-  sortingOptions: string[];
+  sortOptions: SortOptions;
   executedAt: string;
 }
 
 interface FilterOptions {
-  patentFilterOptions: Record<string, FilterOption>;
-  paperFilterOptions: Record<string, FilterOption>;
+  patentFilterOptions: Record<PatentFilterKey, FilterOption>;
+  paperFilterOptions: Record<PaperFilterKey, FilterOption>;
 }
 
 type FilterOption = MultiselectFilter | RangeFilter;
 
 interface MultiselectFilter {
   type: "multiselect";
-  options: FilterValue[];
+  options: string[];
 }
 
 interface RangeFilter {
   type: "range";
   min: number;
   max: number;
-  selectedMin: number;
-  selectedMax: number;
 }
 
-interface FilterValue {
-  value: string;
-  count: number;
-  active: boolean;
+type PatentFilterKey =
+  | "cpc"
+  | "filedYear"
+  | "priorityYear"
+  | "publicationYear"
+  | "grantYear"
+  | "patentHolder"
+  | "keywords"
+  | "concepts";
+
+type PaperFilterKey =
+  | "journal"
+  | "publicationYear"
+  | "cpc"
+  | "citations"
+  | "author"
+  | "concepts";
+
+interface SortOptions {
+  patentSortOptions: PatentSortKey[]; //
+  paperSortOptions: PaperSortKey[];
 }
+
+type PatentSortKey =
+  | "id"
+  | "title"
+  | "inventor"
+  | "patentHolder"
+  | "filedYear"
+  | "priorityYear"
+  | "publicationYear"
+  | "grantYear";
+
+type PaperSortKey =
+  | "title"
+  | "author"
+  | "journal"
+  | "publicationYear"
+  | "citations";
 ```
 
 **Endpoints:**
 
-- **`POST /search/execute`**: `SearchExecutionRequest` → `APIResponse<SearchExecutionResponse>`
+- **`PATCH /projects/{projectId}/selections`**: `SearchExecutionRequest` → `APIResponse<SearchExecutionResponse>`
 
 ## Step 2: Matrix Dimension Specification
 
@@ -218,9 +332,9 @@ interface MatrixSpecInitResponse {
 
 **Endpoint:**
 
-- **`POST /matrix/initialize-specification`**: `MatrixSpecInitRequest` → `APIResponse<MatrixSpecInitResponse>`
+- **`PATCH /projects/{projectId}/matrix-specification`**: `MatrixSpecInitRequest` → `APIResponse<MatrixSpecInitResponse>`
 
-## Step 3: Matrix Generation
+## Step 3: Save/Finalize Project and Export Matrix
 
 ```typescript
 interface MatrixGenerationRequest {
@@ -268,8 +382,23 @@ interface MatrixCellDetailsResponse {
 
 **Endpoints:**
 
-- **`POST /matrix/generate`**: `MatrixGenerationRequest` → `APIResponse<MatrixGenerationResponse>`
-<!-- - **`GET /matrix/{projectId}/cell/{functionIndex}/{technologyIndex}`**: → `APIResponse<MatrixCellDetailsResponse>` // We no longer need this, as Front-end will store the data. -->
+- **`PATCH /projects/{projectId}/status`**: `MatrixGenerationRequest` → `APIResponse<MatrixGenerationResponse>`
+
+### Matrix Export Request
+
+```typescript
+interface MatrixExportRequest {
+  projectId: string;
+}
+```
+
+**Endpoint:**
+
+- **`GET /projects/{projectId}/export`**: `MatrixExportRequest` → Binary Excel file with `Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`
+
+## Matrix Sharing & Viewing
+
+// [TODO]: `GET /projects/{projectId}/share` and `GET /projects/{projectId}` already defined above
 
 ### Matrix View Settings
 
@@ -290,35 +419,7 @@ interface MatrixViewSettingsSaveResponse {
 
 **Endpoint:**
 
-- **`POST /matrix/view-settings`**: `MatrixViewSettingsSaveRequest` → `APIResponse<MatrixViewSettingsSaveResponse>`
-
-## Step 4: Matrix Export & Review
-
-### Matrix Export Request
-
-```typescript
-interface MatrixExportRequest {
-  projectId: string;
-}
-```
-
-**Endpoint:**
-
-- **`POST /matrix/{projectId}/export`**: `MatrixExportRequest` → Binary Excel file with `Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`
-
-### Matrix Sharing & Viewing
-
-```typescript
-interface MatrixShareRequest {
-  projectId: string;
-  userId: string; // To allow access to authenticated users
-}
-
-interface MatrixShareResponse {
-  creatorId: string; // To check if the viewer can change the view settings
-  ...MatrixGenerationResponse;
-}
-```
+- **`POST /projects/{projectId}/view-settings`**: `MatrixViewSettingsSaveRequest` → `APIResponse<MatrixViewSettingsSaveResponse>`
 
 ---
 
@@ -335,7 +436,7 @@ interface StepCode {
   //   QUERY_BUILDER: "query_builder";
   SELECTION: "selection";
   MATRIX_SPECIFICATION: "matrix_specification";
-  // MATRIX_GENERATION: "matrix_generation"; // Final state - read-only
+  // MATRIX_GENERATION: "matrix_generation"; // 最終狀態 - 唯讀
 }
 
 interface UserProgressData {
@@ -346,16 +447,39 @@ interface UserProgressData {
 interface SelectionProgress {
   selectedPatentIds: string[];
   selectedPaperIds: string[];
-  currentTabIndex: number;
-  filters: FilterOptions[];
-  sorting: SortSettings[];
+  selectedTab: "patent" | "paper";
+  filters: FilterSettings;
+  sorting: SortSettings;
+}
+
+interface FilterSettings {
+    patentFilterSettings: Record<PatentFilterKey, FilterOptionSetting>;
+    paperFilterSettings: Record<PaperFilterKey, FilterOptionSetting>;
+}
+
+interface FilterOptionSetting = {
+    type: "multiselect" | "range";
+    selectedValues?: string[]; // for multiselect
+    selctedMin?: number; // for range
+    selectedMax?: number; // for range
+    // selectedCount?: number; // for multiselect。前端會計算
 }
 
 interface SortSettings {
+  patentSortSettings: PatentSortSettings[];
+  paperSortSettings: PaperSortSettings[];
+}
+
+interface PatentSortSettings {
   index?: number;
-  field: string;
-  order: "ASC" | "DESC";
-  active: boolean;
+  field: PatentSortKey;
+  order: "ASC" | "DESC" | "DISABLED";
+}
+
+interface PaperSortSettings {
+  index?: number;
+  field: PaperSortKey;
+  order: "ASC" | "DESC" | "DISABLED";
 }
 
 interface MatrixSpecProgress {
@@ -374,8 +498,8 @@ interface ProgressRetrievalResponse {
 
 **Endpoints:**
 
-- **`POST /user/progress`**: `ProgressSaveRequest` → `APIResponse<ProgressSaveResponse>`
-- **`GET /user/progress/{projectId}`**: → `APIResponse<ProgressRetrievalResponse>`
+- **`POST /users/{userId}/progress/{projectId}`**: `ProgressSaveRequest` → `APIResponse<ProgressSaveResponse>`
+- **`GET /users/{userId}/progress/{projectId}`**: → `APIResponse<ProgressRetrievalResponse>`
 
 ---
 
@@ -393,7 +517,7 @@ interface ProjectSummary {
   projectName: string;
   createdAt: string;
   lastModifiedAt: string;
-  status: "in_progress" | "completed";
+  status: "OPEN" | "COMPLETED";
 }
 
 interface ProjectRenameRequest {
@@ -403,9 +527,9 @@ interface ProjectRenameRequest {
 
 **Endpoints:**
 
-- **`GET /user/projects/{userId}`**: Query params → `APIResponse<ProjectsListResponse>`
-- **`POST /user/projects/{projectId}/rename`**: `ProjectRenameRequest` → `APIResponse<{}>`
-- **`DELETE /user/projects/{projectId}`**: → `APIResponse<{}>`
+- **`GET /users/{userId}/projects` or `GET /users/me/projects`**: Query params → `APIResponse<ProjectsListResponse>`
+- **`PATCH /users/{userId}/projects/{projectId}`**: `ProjectRenameRequest` → `APIResponse<{}>`
+- **`DELETE /users/{userId}/projects/{projectId}`**: → `APIResponse<{}>`
 
 ### Reviewing Individual Projects (History)
 
@@ -486,7 +610,7 @@ Content-Type: application/json
 
 Unauthenticated endpoints:
 
-- `POST /auth/login`
+- `POST /sessions`
 
 ---
 
@@ -505,19 +629,19 @@ Unauthenticated endpoints:
 | 429  | Too Many Requests     | Rate limit exceeded                   |
 | 500  | Internal Server Error | Unexpected backend error              |
 
----
+<!-- ---
 
 ## Rate Limiting
 
 **Suggested Limits:**
 
-| Endpoint                                | Limit | Window |
-| --------------------------------------- | ----- | ------ |
-| `POST /search/execute`                  | 30    | 1 hour |
-| `POST /matrix/initialize-specification` | 20    | 1 hour |
-| `POST /matrix/generate`                 | 10    | 1 hour |
-| `POST /matrix/export`                   | 50    | 1 hour |
-| Default                                 | 1000  | 1 hour |
+| Endpoint                                           | Limit | Window |
+| -------------------------------------------------- | ----- | ------ |
+| `POST /projects`                                   | 30    | 1 hour |
+| `PATCH /projects/{projectId}/selections`           | 20    | 1 hour |
+| `PATCH /projects/{projectId}/matrix-specification` | 10    | 1 hour |
+| `GET /projects/{projectId}/export`                 | 50    | 1 hour |
+| Default                                            | 1000  | 1 hour |
 
 **Response Headers:**
 
@@ -531,13 +655,13 @@ X-RateLimit-Reset: <timestamp>
 
 ## Timeout Expectations
 
-| Endpoint                                | Timeout |
-| --------------------------------------- | ------- |
-| `POST /search/execute`                  | 30-60s  |
-| `POST /matrix/initialize-specification` | 15-30s  |
-| `POST /matrix/generate`                 | 30-60s  |
-| `POST /matrix/export`                   | 30-60s  |
-| Other endpoints                         | 5-10s   |
+| Endpoint                                           | Timeout |
+| -------------------------------------------------- | ------- |
+| `POST /projects`                                   | 30-60s  |
+| `PATCH /projects/{projectId}/selections`           | 15-30s  |
+| `PATCH /projects/{projectId}/matrix-specification` | 30-60s  |
+| `GET /projects/{projectId}/export`                 | 30-60s  |
+| Other endpoints                                    | 5-10s   | -->
 
 ---
 

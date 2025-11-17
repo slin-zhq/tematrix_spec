@@ -140,7 +140,7 @@ interface KeywordSuggestionsResponse {
 
 **端點：**
 
-- **`GET /query-builder/keyword-suggestions`**：`KeywordSuggestionsRequest` → `APIResponse<KeywordSuggestionsResponse>`
+- **`GET /query-builder-keyword-suggestions`**：`KeywordSuggestionsRequest` → `APIResponse<KeywordSuggestionsResponse>`
 
 ## 步驟 1：專利與論文選擇
 
@@ -163,40 +163,72 @@ interface SearchExecutionResponse {
   patents: Patent[];
   papers: Paper[];
   filterOptions: FilterOptions;
-  sortingOptions: string[];
+  sortOptions: SortOptions;
   executedAt: string;
 }
 
 interface FilterOptions {
-  patentFilterOptions: Record<string, FilterOption>;
-  paperFilterOptions: Record<string, FilterOption>;
+  patentFilterOptions: Record<PatentFilterKey, FilterOption>;
+  paperFilterOptions: Record<PaperFilterKey, FilterOption>;
 }
 
 type FilterOption = MultiselectFilter | RangeFilter;
 
 interface MultiselectFilter {
   type: "multiselect";
-  options: FilterValue[];
+  options: string[];
 }
 
 interface RangeFilter {
   type: "range";
   min: number;
   max: number;
-  selectedMin: number;
-  selectedMax: number;
 }
 
-interface FilterValue {
-  value: string;
-  count: number;
-  active: boolean;
+type PatentFilterKey =
+  | "cpc"
+  | "filedYear"
+  | "priorityYear"
+  | "publicationYear"
+  | "grantYear"
+  | "patentHolder"
+  | "keywords"
+  | "concepts";
+
+type PaperFilterKey =
+  | "journal"
+  | "publicationYear"
+  | "cpc"
+  | "citations"
+  | "author"
+  | "concepts";
+
+interface SortOptions {
+  patentSortOptions: PatentSortKey[]; //
+  paperSortOptions: PaperSortKey[];
 }
+
+type PatentSortKey =
+  | "id"
+  | "title"
+  | "inventor"
+  | "patentHolder"
+  | "filedYear"
+  | "priorityYear"
+  | "publicationYear"
+  | "grantYear";
+
+type PaperSortKey =
+  | "title"
+  | "author"
+  | "journal"
+  | "publicationYear"
+  | "citations";
 ```
 
 **端點：**
 
-- **`POST /search/execute`**：`SearchExecutionRequest` → `APIResponse<SearchExecutionResponse>`
+- **`POST /search`**：`SearchExecutionRequest` → `APIResponse<SearchExecutionResponse>`
 
 ## 步驟 2：矩陣維度規格
 
@@ -346,16 +378,39 @@ interface UserProgressData {
 interface SelectionProgress {
   selectedPatentIds: string[];
   selectedPaperIds: string[];
-  currentTabIndex: number;
-  filters: FilterOptions[];
-  sorting: SortSettings[];
+  selectedTab: "patent" | "paper";
+  filters: FilterSettings;
+  sorting: SortSettings;
+}
+
+interface FilterSettings {
+    patentFilterSettings: Record<PatentFilterKey, FilterOptionSetting>;
+    paperFilterSettings: Record<PaperFilterKey, FilterOptionSetting>;
+}
+
+interface FilterOptionSetting = {
+    type: "multiselect" | "range";
+    selectedValues?: string[]; // for multiselect
+    selctedMin?: number; // for range
+    selectedMax?: number; // for range
+    // selectedCount?: number; // for multiselect。前端會計算
 }
 
 interface SortSettings {
+  patentSortSettings: PatentSortSettings[];
+  paperSortSettings: PaperSortSettings[];
+}
+
+interface PatentSortSettings {
   index?: number;
-  field: string;
-  order: "ASC" | "DESC";
-  active: boolean;
+  field: PatentSortKey;
+  order: "ASC" | "DESC" | "DISABLED";
+}
+
+interface PaperSortSettings {
+  index?: number;
+  field: PaperSortKey;
+  order: "ASC" | "DESC" | "DISABLED";
 }
 
 interface MatrixSpecProgress {
@@ -374,8 +429,8 @@ interface ProgressRetrievalResponse {
 
 **端點：**
 
-- **`POST /user/progress`**：`ProgressSaveRequest` → `APIResponse<ProgressSaveResponse>`
-- **`GET /user/progress/{projectId}`**：→ `APIResponse<ProgressRetrievalResponse>`
+- **`POST /user-progress`**：`ProgressSaveRequest` → `APIResponse<ProgressSaveResponse>`
+- **`GET /user-progress/{projectId}`**：→ `APIResponse<ProgressRetrievalResponse>`
 
 ---
 
@@ -403,9 +458,9 @@ interface ProjectRenameRequest {
 
 **端點：**
 
-- **`GET /user/projects/{userId}`**：查詢參數 → `APIResponse<ProjectsListResponse>`
-- **`POST /user/projects/{projectId}/rename`**：`ProjectRenameRequest` → `APIResponse<{}`>
-- **`DELETE /user/projects/{projectId}`**：→ `APIResponse<{}`>
+- **`GET /projects/{userId}`**：查詢參數 → `APIResponse<ProjectsListResponse>`
+- **`POST /projects/{projectId}/rename`**：`ProjectRenameRequest` → `APIResponse<{}`>
+- **`DELETE /projects/{projectId}`**：→ `APIResponse<{}`>
 
 ### 檢閱個別專案 (歷史)
 
