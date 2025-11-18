@@ -1,11 +1,89 @@
 # TEMatrix Backend API Specification
 
 **Created**: Nov 03, 2025  
-**Last Updated**: Nov 17, 2025
+**Last Updated**: Nov 18, 2025
 
 ---
 
-**Design Rationale**: "API as single source of truth" - the backend confirms what was processed, and the frontend can cache it in local state if needed but doesn't have to.
+**Design Rationale**: For now, frontend will handle the following to minimize load on backend:
+
+- Filtering and sorting of patents and papers in Step 2 (Select patents and papers)
+- Customizing blue/red ocean thresholds in Step 3 (View and customize matrix)
+- Tapping on individual cells to view patents and papers in that cell in Step 3 (View and customize matrix)
+
+> **Tip:** According to REST best pracitices, PUT is used to replace an entire resource or create it if it doesn't exist, while PATCH is for partially updating a resource. POST is used to submit data to create a new resource or add to an existing one. _Souce: [GeeksForGeeks](https://www.geeksforgeeks.org/java/what-is-the-difference-between-put-post-and-patch-in-restful-api/)_.
+
+We use `PATCH` for updating selections, matrix specifications, and matrix finalization because these operations involve partial updates (e.g., saving progress with flags like `selectionConfirmed` or `specificationConfirmed`, or updating specific fields like view settings). `PATCH` allows flexible, partial changes without requiring the full resource replacement that `PUT` demands. For first-time creation of these sub-resources, `PATCH` handles it as an upsert (create if not exists, update otherwise), avoiding unnecessary `POST` endpoints and keeping the API simple and project-centric.
+
+---
+
+## Entity-Relationship Diagram (ERD)
+
+<!-- ```
++----------------+     +-----------------+
+|     User       |     |    Session      |
+| (1)            |     | (1:1 with User) |
+| - userId       |     | - sessionToken  |
+| - username     |     | - expiresIn     |
++----------------+     +-----------------+
+         | (1:N)
+         v
++----------------+     +-----------------+
+|   Project      |     |   Selections    |
+| (1)            |     | (1:1 with Proj) |
+| - projectId    |     | - patentIds[]   |
+| - projectTitle |     | - paperIds[]    |
+| - status       |     | - filters       |
+| - createdAt    |     | - sorts         |
++----------------+     +-----------------+
+         | (1:1)
+         v
++----------------+     +-----------------+
+| Matrix-Spec    |     |     Matrix      |
+| (1:1 with Proj)|     | (1:1 with Proj) |
+| - functionLabels|     | - cells[]       |
+| - techLabels    |     | - createdAt     |
++----------------+     +-----------------+
+         | (1:1)
+         v
++----------------+     +-----------------+
+|   View-Settings|     |     Progress    |
+| (1:1 with Proj)|     | (1:1 with Proj) |
+| - blueThreshold|     | - currentStep   |
+| - redThreshold |     | - selections    |
+|                |     | - specifications|
+|                |     | - matrix        |
++----------------+     +-----------------+
+         | (1:N)
+         v
++----------------+     +-----------------+
+|    Exports     |     |     Shares      |
+| (N:1 with Proj)|     | (N:1 with Proj) |
++----------------+     +-----------------+
+
+External Resources (Read-Only):
++----------------+     +-----------------+
+|    Patents     |     |     Papers      |
+| (Global)       |     | (Global)        |
+| - id           |     | - id            |
+| - title        |     | - title         |
+| - inventor     |     | - author        |
+| - ...          |     | - ...           |
++----------------+     +-----------------+
+```
+
+**Key Relationships:** -->
+
+- **User (1) → (N) Project**: One user owns many projects.
+- **Project (1) → (1) Selections**: Each project has one set of selections (patents/papers).
+- **Project (1) → (1) Matrix-Spec**: Each project has one matrix specification.
+- **Project (1) → (1) Matrix**: Each project has one matrix (composed of cells).
+- **Matrix (1) → (M) Cells**: A matrix contains many cells (each cell links to patents/papers).
+- **Project (1) → (N) View-Settings**: Each project has many sets of view settings (saved by different users).
+- **Project (1) → (1) Progress**: Each project has one progress snapshot.
+- **Project (1) → (N) Exports**: A project can have multiple exports.
+- **Project (1) → (N) Shares**: A project can be shared with multiple users.
+- **Patents/Papers**: Global, read-only collections; referenced by selections and cells but not owned by projects.
 
 ---
 
@@ -17,7 +95,7 @@ In line with REST best practices, the API is organized around key resources that
 
 ### Resources:
 
-- `users`: Currently only for authentication, as a user has `username` and `password`.
+- `users`: Currently only for authentication; a user has `username` and `password`.
 - `sessions`: For managing user sessions (login/logout).
 - `projects`: Each project represents a workflow – `Build query` -> `Select patents and papers` -> `Specify matrix dimensions` -> `Generate and finalize matrix`, etc.
 
@@ -32,19 +110,17 @@ In line with REST best practices, the API is organized around key resources that
 
 Step 0. Build query
 
-- `GET /query-builder/keyword-suggestions`: Get AI keyword suggestions based on seed keyword.
-  - Request param: `seed_keyword`
-  - Response: List of suggested keywords.
+- `GET /query-builder/keyword-suggestions?seedKeyword="<seedKeyword>"`: Get AI keyword suggestions based on seed keyword.
+  > Q: Why `GET` with a query parameter `seedKeyword`?
+  > A: Because:
+  >
+  > - `GET` is safe/idempotent and supports caching/bookmarking.
+  > - Query params are discoverable and follow typical search endpoints.
 - `POST /projects`: Executing a search is equivalent to creating a new project.
-  - Request body includes the boolean query built by user, and user ID from session.
-  - Response includes the project ID and search results (patents and papers).
 
 Step 1. Select patents and papers
 
 - `PATCH /projects/{projectId}/selections`: Save selected patents and papers for the next step.
-
-  - Request body includes the selected patent and paper IDs.
-  - Response includes save confirmation, and pre-generated AI suggestions for matrix dimensions. This action is synchronous for our use case. For bigger datasets, we consider making this asynchronous with a job resource.
 
 <!-- - `PATCH /projects/{projectId}`: Confirm selections (advance project state and optionally trigger matrix spec suggestions).
   - Request body includes ids of selected patents and papers.
@@ -53,41 +129,33 @@ Step 1. Select patents and papers
 Step 2. Specify matrix dimensions
 
 - `PATCH /projects/{projectId}/matrix-specification`: Save/update matrix dimensions. Generate matrix based on selected patents/papers and specified dimensions.
-  - Request body includes function and technology labels.
-  - Response includes generated matrix data.
 
 Step 3. Save/finalize project and export matrix
 
-- `PATCH /projects/{projectId}/status`: Finalize (irreversible). Matrix can be shared only after finalization. Shared matrix can be viewed by anyone using the project link.
-  - Request body includes final status.
-  - Response includes confirmation of finalization.
+- `PATCH /projects/{projectId}/matrix`: Finalize (irreversible). Matrix can be shared only after finalization. Shared matrix can be viewed by anyone using the project link.
+
 - `GET /projects/{projectId}/export`: Export the matrix as an Excel file.
 
 **User progress management:**
 
-- `POST /users/{userId}/progress/{projectId}`: Save user progress at a specific step in the project workflow.
-- `GET /users/{userId}/progress/{projectId}`: Retrieve saved progress for a specific project.
+<!-- - `POST /users/{userId}/progress/{projectId}`: Save user progress at a specific step in the project workflow. -->
+
+- `GET /users/me/progress/{projectId}`: Retrieve saved progress for a specific project.
 
 **Matrix sharing and view settings management:**
 
 - `GET /projects/{projectId}/share`: Share the matrix with others via a link. Anyone with the link can view the matrix.
 - `GET /projects/{projectId}`: View (shared) matrix. Non-finalized projects cannot be shared/viewed.
-- `POST /projects/{projectId}/view-settings`: Anyone can have their own settings (blue/red ocean threshold). By default, use the creator's settings. Creator's action is treated the same as others, but they can change the default settings for new viewers.
+- `PUT /projects/{projectId}/view-settings`: Anyone can have their own settings (blue/red ocean threshold). By default, use the creator's settings. Creator's action is treated the same as others, but they can change the default settings for new viewers.
+  > Note: Here, we decided to use `PUT` instead of `PATCH` or `POST` to emphasize that the view settings are to be replaced as an entire resorce or created if they don't exist.
 
 **Projects/searches management:**
 
-- `GET /users/{userId}/projects`: Get list of user's projects (searches).
+<!-- - `GET /users/{userId}/projects`: Get list of user's projects (searches). -->
+
 - `GET /users/me/projects`: Get list of current logged-in user's projects (searches).
-- `PATCH /users/{userId}/projects/{projectId}`: Rename a project.
-- `DELETE /users/{userId}/projects/{projectId}`: Delete a project.
-
-**Notes:**
-
-> To clear confusion, when user continues an open project, we load the saved progress.
-> When user moves forward to next step, we use `PATCH` end points to update the project state and data.
-> When user reverts to previous step and make changes, if they choose to move forward again, we overwrite the project state and data with new inputs, using `PATCH` end points.
-
-// [TODO]: To resolve `PATCH` ambiguity, right now, there's collision with saving progress and moving to the next step. We can consider adding a query param like `?advance=true` to indicate moving forward to next step.
+- `PATCH /users/me/projects/{projectId}`: Rename a project.
+- `DELETE /users/me/projects/{projectId}`: Delete a project.
 
 ---
 
@@ -118,7 +186,7 @@ interface APIError {
 interface ValidationErrorDetail {
   field?: string;
   message: string;
-  position?: number;
+  //   position?: number;
 }
 
 type ErrorType =
@@ -137,136 +205,156 @@ type ErrorType =
 
 ---
 
-## Data Model Interfaces
+## API Requests & Responses
 
-### Patent Interface
+### 1. Authentication
 
-```typescript
-interface Patent {
-  id: string;
-  title: string;
-  inventor: string;
-  patentHolder: string;
-  filedYear: number;
-  priorityYear?: number; // Data may not be available
-  publicationYear?: number; // Data may not be available
-  grantYear?: number; // Data may not be available
-  cpc: string[];
-  keywords: string | string[];
-  concepts: string;
-  link: string;
+**`POST /sessions`: User login.**
+
+Request:
+
+```json
+{
+    "username": string,
+    "password": string
 }
 ```
 
-### Paper Interface
+Response:
 
-```typescript
-interface Paper {
-  id: string;
-  title: string;
-  author: string;
-  journal: string;
-  publicationYear: number;
-  citations: number;
-  cpc: string[];
-  concepts: string;
-  link: string;
+```json
+{
+    ...APIResponse,
+    data: {
+        "sessionToken": string,
+        "userId": string,
+        "username": string,
+        "expiresInHours": number // Frontend can use this to set token expiry time, and auto-logout accordingly
+    }
 }
 ```
 
----
+**`DELETE /sessions`: User logout.**
 
-## Authentication
+Request:
 
-### Login Request/Response
-
-```typescript
-interface LoginRequest {
-  username: string;
-  password: string;
-}
-
-interface LoginResponse {
-  sessionToken: string;
-  userId: string;
-  username: string;
-  expiresIn: number; // seconds
-}
-
-interface LogoutResponse {
-  message: string;
+```json
+{
+  // No body needed, just Auth header with session token
 }
 ```
 
-**Endpoints:**
+Response:
 
-- **`POST /sessions`**: `LoginRequest` → `APIResponse<LoginResponse>`
-- **`DELETE /sessions`**: Headers: `Authorization: Bearer <token>` → `APIResponse<LogoutResponse>`
-
----
-
-## Step 0: Query Builder
-
-### Keyword Suggestions Request/Response
-
-```typescript
-interface KeywordSuggestionsRequest {
-  seed_keyword: string;
-}
-
-interface KeywordSuggestionsResponse {
-  keyword: string;
-  suggestions: string[];
+```json
+{
+    ...APIResponse
 }
 ```
 
-**Endpoint:**
+### 2. Project Workflow
 
-- **`GET /query-builder/keyword-suggestions`**: `KeywordSuggestionsRequest` → `APIResponse<KeywordSuggestionsResponse>`
+#### Step 0: Build Query
 
-## Step 1: Patent & Paper Selection
+**`GET /query-builder/keyword-suggestions?seedKeyword="<seedKeyword>"`: Get AI keyword suggestions based on seed keyword.**
+
+Request:
+
+```json
+{
+  // None
+}
+```
+
+Response:
+
+```json
+{
+    ...APIResponse,
+    "data": {
+        "seedKeyword": string,
+        "suggestions": string[]
+    }
+}
+```
+
+**`POST /projects`: Execute search and create new project.**
+
+Request:
+
+> Note: The user ID is obtained from the session token in Auth header.
+
+```json
+{
+    "projectTitle": string,
+    "query": string,
+    "yearRange": {
+        "start": number,
+        "end": number
+    } // optional, default to last 5 years
+}
+```
+
+Response:
+
+```json
+{
+    ...APIResponse,
+    "data": {
+        "projectId": string,
+        "projectTitle": string,
+        "query": string,
+        "patents": [
+            {
+                "id": string,
+                "title": string,
+                "inventor": string,
+                "patentHolder": string,
+                "filedYear": number,
+                "priorityYear": number | null,
+                "publicationYear": number | null,
+                "grantYear": number | null,
+                "cpc": string[],
+                "keywords": string[],
+                "concepts": string[],
+                "link": string
+            },
+            {...}, ...
+        ],
+        "papers": [
+            {
+                "id": string,
+                "title": string,
+                "author": string[],
+                "journal": string,
+                "publicationYear": number,
+                "citations": number,
+                "cpc": string[],
+                "concepts": string[],
+                "link": string
+            },
+            {...}, ...
+        ],
+        "filterOptions": {
+            "patent": {
+                PatentFilterKey: FilterOption,
+                ...
+            },
+            "paper": {
+                PaperFilterKey: FilterOption,
+                ...
+            }
+        },
+        "sortOptions": {
+            "patent": PatentSortKey[],
+            "paper": PaperSortKey[]
+        },
+        "createdAt": string // ISO 8601 timestamp
+    }
+}
+```
 
 ```typescript
-interface SearchExecutionRequest {
-  projectName: string;
-  query: string;
-  yearRange?: YearRange; // 預設為近五年
-}
-
-interface YearRange {
-  min: number;
-  max: number;
-}
-
-interface SearchExecutionResponse {
-  projectId: string;
-  projectName: string;
-  query: string;
-  patents: Patent[];
-  papers: Paper[];
-  filterOptions: FilterOptions;
-  sortOptions: SortOptions;
-  executedAt: string;
-}
-
-interface FilterOptions {
-  patentFilterOptions: Record<PatentFilterKey, FilterOption>;
-  paperFilterOptions: Record<PaperFilterKey, FilterOption>;
-}
-
-type FilterOption = MultiselectFilter | RangeFilter;
-
-interface MultiselectFilter {
-  type: "multiselect";
-  options: string[];
-}
-
-interface RangeFilter {
-  type: "range";
-  min: number;
-  max: number;
-}
-
 type PatentFilterKey =
   | "cpc"
   | "filedYear"
@@ -285,9 +373,17 @@ type PaperFilterKey =
   | "author"
   | "concepts";
 
-interface SortOptions {
-  patentSortOptions: PatentSortKey[]; //
-  paperSortOptions: PaperSortKey[];
+type FilterOption = MultiselectFilter | RangeFilter;
+
+interface MultiselectFilter {
+  type: "multiselect";
+  options: string[];
+}
+
+interface RangeFilter {
+  type: "range";
+  min: number;
+  max: number;
 }
 
 type PatentSortKey =
@@ -308,294 +404,469 @@ type PaperSortKey =
   | "citations";
 ```
 
-**Endpoints:**
+#### Step 1: Select Patents and Papers
 
-- **`PATCH /projects/{projectId}/selections`**: `SearchExecutionRequest` → `APIResponse<SearchExecutionResponse>`
+**`PATCH /projects/{projectId}/selections` with `selectionConfirmed: false`: Save selected patents and papers.**
 
-## Step 2: Matrix Dimension Specification
+Request:
 
-```typescript
-interface MatrixSpecInitRequest {
-  projectId: string;
-  selectedPatentIds: string[];
-  selectedPaperIds: string[];
-}
+```json
+{
+    "selectedPatentIds": string[],
+    "selectedPaperIds": string[],
+    /// --- For saving user progress
+    "selectedTab": "patent" | "paper",
+    "filterSettings": {
+        "patentFilterSettings": {
+            PatentFilterKey: {
+                "type": "multiselect",
+                "selectedValues": string[]
+            },
+            PatentFilterKey: {
+                "type": "range",
+                "selectedMin": number,
+                "selectedMax": number
+            }
+            ...
+        },
+        "paperFilterSettings": {
+            PaperFilterKey: {
+                "type": "multiselect",
+                "selectedValues": string[]
+            },
+            PaperFilterKey: {
+                "type": "range",
+                "selectedMin": number,
+                "selectedMax": number
+            }
+            ...
+        }
+    },
+    "sortSettings": {
+        "patentSortSettings": {
+            PatentSortKey: {
+                "index": number | null,
+                "order": "ASC" | "DESC" | null,
+            }
+            ...
+        },
+        "paperSortSettings": {
+            PaperSortKey: {
+                "index": number | null,
+                "order": "ASC" | "DESC" | null,
+            }
+            ...
+        }
+    },
+    /// ---
+    "selectionConfirmed": false // whether user confirms selections to advance project state
+                                // If true, prepare AI suggestions for matrix dimensions
+                                // If false, just save selections
 
-interface MatrixSpecInitResponse {
-  projectId: string;
-  projectName: string;
-  query: string;
-  functionSuggestions: string[];
-  technologySuggestions: string[];
-}
-```
-
-**Endpoint:**
-
-- **`PATCH /projects/{projectId}/matrix-specification`**: `MatrixSpecInitRequest` → `APIResponse<MatrixSpecInitResponse>`
-
-## Step 3: Save/Finalize Project and Export Matrix
-
-```typescript
-interface MatrixGenerationRequest {
-  projectId: string;
-  functionLabels: string[];
-  technologyLabels: string[];
-}
-
-interface MatrixGenerationResponse extends APIResponse {
-  data: {
-    projectId: string;
-    functionLabels: string[];
-    technologyLabels: string[];
-    cells: MatrixCell[];
-    createdAt: string;
-  };
-}
-
-interface MatrixCell {
-  functionIndex: number;
-  technologyIndex: number;
-  patentCount: number;
-  paperCount: number;
-  patentIds: string[];
-  paperIds: string[];
-}
-
-interface MatrixCellDetailsRequest {
-  projectId: string;
-  functionIndex: number;
-  technologyIndex: number;
-}
-
-interface MatrixCellDetailsResponse {
-  cell: {
-    functionLabel: string;
-    technologyLabel: string;
-    patents: Patent[]; // Full patent details
-    papers: Paper[]; // Full paper details
-    patentCount: number;
-    paperCount: number;
-  };
 }
 ```
 
-**Endpoints:**
+Response:
 
-- **`PATCH /projects/{projectId}/status`**: `MatrixGenerationRequest` → `APIResponse<MatrixGenerationResponse>`
-
-### Matrix Export Request
-
-```typescript
-interface MatrixExportRequest {
-  projectId: string;
+```json
+{
+    ...APIResponse,
+    // "data": {
+    //     "projectId": string,
+    // }
 }
 ```
 
-**Endpoint:**
+**`PATCH /projects/{projectId}/selections` with `selectionConfirmed: true`: Confirm selected patents and papers, and move to the next step.**
 
-- **`GET /projects/{projectId}/export`**: `MatrixExportRequest` → Binary Excel file with `Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`
+> This action is synchronous for our use case. For bigger datasets, we consider making this asynchronous with a job resource.
 
-## Matrix Sharing & Viewing
+Request:
 
-// [TODO]: `GET /projects/{projectId}/share` and `GET /projects/{projectId}` already defined above
-
-### Matrix View Settings
-
-To save the "鴻海臨界" and "藍海臨界" preferences.
-
-```typescript
-interface MatrixViewSettingsSaveRequest {
-  projectId: string;
-  settings: {
-    [key: "blue_ocean_threshold" | "red_ocean_threshold"]: number; // Value should be of `double` type.
-  };
-}
-
-interface MatrixViewSettingsSaveResponse {
-  // Nothing special, could adopt the base response interface
+```json
+{
+  // ... same as above...,
+  "selectionConfirmed": true // Every time the backend receives true, it re-generates AI suggestions for matrix dimensions.
 }
 ```
 
-**Endpoint:**
+Response:
 
-- **`POST /projects/{projectId}/view-settings`**: `MatrixViewSettingsSaveRequest` → `APIResponse<MatrixViewSettingsSaveResponse>`
-
----
-
-## Progress & Session Management
-
-```typescript
-interface ProgressSaveRequest {
-  projectId: string;
-  stepCode: StepCode;
-  progress: UserProgressData;
-}
-
-interface StepCode {
-  //   QUERY_BUILDER: "query_builder";
-  SELECTION: "selection";
-  MATRIX_SPECIFICATION: "matrix_specification";
-  // MATRIX_GENERATION: "matrix_generation"; // 最終狀態 - 唯讀
-}
-
-interface UserProgressData {
-  patentsPapersSelection?: SelectionProgress;
-  matrixSpecification?: MatrixSpecProgress;
-}
-
-interface SelectionProgress {
-  selectedPatentIds: string[];
-  selectedPaperIds: string[];
-  selectedTab: "patent" | "paper";
-  filters: FilterSettings;
-  sorting: SortSettings;
-}
-
-interface FilterSettings {
-    patentFilterSettings: Record<PatentFilterKey, FilterOptionSetting>;
-    paperFilterSettings: Record<PaperFilterKey, FilterOptionSetting>;
-}
-
-interface FilterOptionSetting = {
-    type: "multiselect" | "range";
-    selectedValues?: string[]; // for multiselect
-    selctedMin?: number; // for range
-    selectedMax?: number; // for range
-    // selectedCount?: number; // for multiselect。前端會計算
-}
-
-interface SortSettings {
-  patentSortSettings: PatentSortSettings[];
-  paperSortSettings: PaperSortSettings[];
-}
-
-interface PatentSortSettings {
-  index?: number;
-  field: PatentSortKey;
-  order: "ASC" | "DESC" | "DISABLED";
-}
-
-interface PaperSortSettings {
-  index?: number;
-  field: PaperSortKey;
-  order: "ASC" | "DESC" | "DISABLED";
-}
-
-interface MatrixSpecProgress {
-  selectedFunctionLabels: string[];
-  selectedTechnologyLabels: string[];
-}
-
-interface ProgressRetrievalResponse {
-  projectId: string;
-  projectName: string;
-  currentStepCode: StepCode;
-  progress: UserProgressData;
-  lastModifiedAt: string;
+```json
+{
+    ...APIResponse,
+    "data": {
+        // "projectId": string,
+        "matrixSpecificationAISuggestions": {
+            "functionLabels": string[],
+            "technologyLabels": string[]
+        }
+    }
 }
 ```
 
-**Endpoints:**
+#### Step 2: Specify Matrix Dimensions
 
-- **`POST /users/{userId}/progress/{projectId}`**: `ProgressSaveRequest` → `APIResponse<ProgressSaveResponse>`
-- **`GET /users/{userId}/progress/{projectId}`**: → `APIResponse<ProgressRetrievalResponse>`
+**`PATCH /projects/{projectId}/matrix-specification` with `specificationConfirmed: false`: Save/update matrix dimensions.**
 
----
+Request:
 
-## Project Management
-
-### Getting Project List
-
-```typescript
-interface ProjectsListResponse {
-  projects: ProjectSummary[];
-}
-
-interface ProjectSummary {
-  projectId: string;
-  projectName: string;
-  createdAt: string;
-  lastModifiedAt: string;
-  status: "OPEN" | "COMPLETED";
-}
-
-interface ProjectRenameRequest {
-  newName: string;
+```json
+{
+    /// --- For saving user progress
+    "functionLabels": string[], // The order of labels matters
+    "technologyLabels": string[],
+    /// ---
+    "specificationConfirmed": false // whether user confirms matrix spec to generate matrix
+                                    // If true, generate matrix based on selected patents/papers and specified dimensions
+                                    // If false, just save dimensions
 }
 ```
 
-**Endpoints:**
+Response:
 
-- **`GET /users/{userId}/projects` or `GET /users/me/projects`**: Query params → `APIResponse<ProjectsListResponse>`
-- **`PATCH /users/{userId}/projects/{projectId}`**: `ProjectRenameRequest` → `APIResponse<{}>`
-- **`DELETE /users/{userId}/projects/{projectId}`**: → `APIResponse<{}>`
-
-### Reviewing Individual Projects (History)
-
-```typescript
-interface ProjectViewResponse extends APIResponse {
-  // Only completed projects are relevant for viewing
-  data: {
-    projectId: string;
-    projectName: string;
-    query: string;
-    functionLabels: string[];
-    technologyLabels: string[];
-    cells: ProjectViewMatrixCell[];
-    settings: {
-      [key: "blue_ocean_threshold" | "red_ocean_threshold"]: number; // Value should be of `double` type.
-    };
-    createdAt: string;
-  };
-}
-
-interface ProjectViewMatrixCell {
-  functionIndex: number;
-  technologyIndex: number;
-  patentCount: number;
-  paperCount: number;
-  patents: Patent[];
-  papers: Paper[];
+```json
+{
+    ...APIResponse,
+    // "data": {
+    //     "projectId": string,
+    // }
 }
 ```
 
-> Note: Any "logged in" user with the project link can view the project details.
+**`PATCH /projects/{projectId}/matrix-specification` with `specificationConfirmed: true`: Confirm matrix dimensions and generate matrix.**
 
-**Endpoint:**
+Request:
 
-- **`GET /projects/{projectId}`** - → `APIResponse<ProjectViewResponse>`
-
-### Project Rename Request/Response
-
-Renames an existing project.
-
-```typescript
-interface ProjectRenameRequest {
-  newName: string;
-}
-
-interface ProjectRenameResponse {
-  ...APIResponse; // Nothing special, could adopt the base response interface
+```json
+{
+    "functionLabels": string[],
+    "technologyLabels": string[],
+    "specificationConfirmed": true
 }
 ```
 
-**Endpoint:**
+Response:
 
-- **`POST /user/projects/{projectId}/rename`** - `ProjectRenameRequest` → `APIResponse<ProjectRenameResponse>`
-
-### Project Deletion Response
-
-Deletes a project and all associated data.
-
-```typescript
-interface ProjectDeletionResponse {
-  ...APIResponse; // Nothing special, could adopt the base response interface}
+```json
+{
+    ...APIResponse,
+    "data": {
+        // "projectId": string,
+        /// ---
+        // Note: frontend already has functionLabels and technologyLabels from request; however, backend needs to respect the orders sent by frontend.
+        // Otherwise, backend needs to return the labels in order again here.
+        // "functionLabels": string[],
+        // "technologyLabels": string[],
+        /// ---
+        "cells": [
+            {
+                "functionIndex": number,
+                "technologyIndex": number,
+                "patentIds": string[],
+                "paperIds": string[]
+            },
+            {...}, ...
+        ],
+        // "createdAt": string // ISO 8601 timestamp
+    }
+}
 ```
 
-**Endpoint:**
+#### Step 3: Save/Finalize Project and Export Matrix
 
-- **`DELETE /user/projects/{projectId}`** - → `APIResponse<ProjectDeletionResponse>`
+**`PATCH /projects/{projectId}/matrix` to finalize project.**
+
+Request:
+
+```json
+{
+    // "projectId": string,
+    "viewSettings": {
+        "blueOceanThreshold": number,
+        "redOceanThreshold": number
+    },
+    "finalized": true
+}
+```
+
+Response:
+
+```json
+{
+    ...APIResponse,
+    // "data": {
+    //     "projectId": string,
+    // }
+}
+```
+
+**`GET /projects/{projectId}/export`: Export the matrix as an Excel file.**
+
+Request:
+
+```json
+{
+  // No body needed, just projectId in URL
+}
+```
+
+Response:
+
+- Binary Excel file with `Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`
+
+### 3. User Porgress Management
+
+**`GET /users/me/progress/{projectId}`: Retrieve user progress for a specific project.**
+
+Request:
+
+```json
+{
+  // No body needed, just userId and projectId in URL
+}
+```
+
+Response:
+
+```json
+{
+    ...APIResponse,
+    "data": {
+        "projectTitle": string,
+        "query": string,
+        // ---
+        // same as in response from `POST /projects`
+        "patents": [ ... ],
+        "papers": [ ... ],
+        "filterOptions": { ... },
+        "sortOptions": { ... },
+        // ---
+        "currentProgress": {
+            "currentStep": "selection" | "specification" | "matrix",
+            "selection": {
+                // Similar to "Step 1. Select Patents and "Papers"
+                    // `PATCH /projects/{projectId}/selections` with `selectionConfirmed: false` requet body
+                "selectedPatentIds": string[],
+                "selectedPaperIds": string[],
+                "selectedTab": "patent" | "paper",
+                "filterSettings": {
+                    "patentFilterSettings": {
+                        PatentFilterKey: {
+                            "type": "multiselect",
+                            "selectedValues": string[]
+                        },
+                        PatentFilterKey: {
+                            "type": "range",
+                            "selectedMin": number,
+                            "selectedMax": number
+                        }
+                        ...
+                    },
+                    "paperFilterSettings": {
+                        PaperFilterKey: {
+                            "type": "multiselect",
+                            "selectedValues": string[]
+                        },
+                        PaperFilterKey: {
+                            "type": "range",
+                            "selectedMin": number,
+                            "selectedMax": number
+                        }
+                        ...
+                    }
+                },
+                "sortSettings": {
+                    "patentSortSettings": {
+                        PatentSortKey: {
+                            "index": number | null,
+                            "order": "ASC" | "DESC" | null,
+                        }
+                        ...
+                    },
+                    "paperSortSettings": {
+                        PaperSortKey: {
+                            "index": number | null,
+                            "order": "ASC" | "DESC" | null,
+                        }
+                        ...
+                    }
+                },
+
+            },
+            "specification": {
+                "functionLabels": string[],
+                "technologyLabels": string[]
+            } | null, // null if currentStepCode is "selection"
+            "matrix": { // Note: unless user has finalized (and saved) the project, the view settings wouldn't be saved yet, so no need for backend to return them here.
+                "cells": [
+                    {
+                        "functionIndex": number,
+                        "technologyIndex": number,
+                        "patentIds": string[],
+                        "paperIds": string[]
+                    },
+                    {...}, ...
+                ] | null // null if currentStepCode is "selection" or "specification"
+            }
+        },
+    }
+}
+```
+
+### 4. Matrix Sharing & Viewing
+
+**`GET /projects/{projectId}/share`: Share the matrix.**
+
+Request:
+
+```json
+{
+  // No body needed, just projectId in URL
+}
+```
+
+Response:
+
+```json
+{
+    ...APIResponse,
+    "data": {
+        "shareableLink": string // URL to view the shared matrix
+    }
+}
+```
+
+**`GET /projects/{projectId}`: View (shared) matrix.**
+
+Request:
+
+> Note: Backend identify the user from session token in Auth header. If the user has her view preferences (i.e., blue/red ocean thresholds) saved, return those settings; otherwise, return the creator's preferences by default.
+
+```json
+{
+  // No body needed, just projectId in URL
+}
+```
+
+Response:
+
+```json
+{
+    ...APIResponse,
+    "data": {
+        // "projectId": string,
+        "projectTitle": string,
+        "query": string,
+        "patents": [ ... ], // Only selected patents
+        "papers": [ ... ], // Only selected papers
+        "functionLabels": string[],
+        "technologyLabels": string[],
+        "cells": [
+            {
+                "functionIndex": number,
+                "technologyIndex": number,
+                "patentIds": string[],
+                "paperIds": string[]
+            },
+            {...}, ...
+        ],
+        "viewSettings": {
+            "blueOceanThreshold": number,
+            "redOceanThreshold": number
+        },
+        "createdAt": string // ISO 8601 timestamp
+    }
+}
+```
+
+**`PUT /projects/{projectId}/view-settings`: Save/update matrix view settings (blue/red ocean thresholds, etc.).**
+
+Request:
+
+> Note: Backend identify the user from session token in Auth header.
+
+```json
+{
+    "blueOceanThreshold": number,
+    "redOceanThreshold": number
+}
+```
+
+### 5. Projects/Searches Management
+
+On the home page, users can see their list of projects (searches), rename projects, and delete projects.
+
+**`GET /users/me/projects`: Get list of user's projects.**
+
+Request:
+
+> Note: Backend identify the user from session token in Auth header.
+
+```json
+{
+  // No body needed, just Auth header with session token
+}
+```
+
+Response:
+
+```json
+{
+    ...APIResponse,
+    "data": {
+        "projects": [
+            {
+                "projectId": string,
+                "projectTitle": string,
+                "createdAt": string, // ISO 8601 timestamp; Frontend can use this to sort projects by creation date
+                "status": "OPEN" | "COMPLETED"
+            },
+            {...}, ...
+        ]
+    }
+}
+```
+
+**`PATCH /users/me/projects/{projectId}`: Rename a project.**
+
+Request:
+
+> Note: Backend identify the user from session token in Auth header.
+
+```json
+{
+    "newTitle": string
+}
+```
+
+Response:
+
+```json
+{
+    ...APIResponse,
+}
+```
+
+**`DELETE /users/{userId}/projects/{projectId}`: Delete a project.**
+
+Request:
+
+> Note: Backend identify the user from session token in Auth header.
+
+```json
+{
+  // No body needed, just userId and projectId in URL
+}
+```
+
+Response:
+
+```json
+{
+    ...APIResponse
+}
+```
 
 ---
 
@@ -663,7 +934,7 @@ X-RateLimit-Reset: <timestamp>
 | `GET /projects/{projectId}/export`                 | 30-60s  |
 | Other endpoints                                    | 5-10s   | -->
 
----
+<!-- ---
 
 ## Future Enhancements (Phase 2)
 
@@ -710,19 +981,4 @@ interface AsyncJobResponse {
 
 // Poll for results:
 GET /jobs/{jobId} → AsyncJobResponse
-```
-
-### Optional Caching Headers
-
-```typescript
-// For stable data that can be cached:
-GET /user/projects
-  Cache-Control: private, max-age=300  // 5 minutes
-
-GET /matrix/{projectId}
-  Cache-Control: private, max-age=3600  // 1 hour
-
-// For volatile data:
-POST /search/execute
-  Cache-Control: no-cache
-```
+``` -->
