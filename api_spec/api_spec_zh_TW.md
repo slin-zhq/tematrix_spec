@@ -11,9 +11,9 @@
 - 在步驟 3（查看與自訂矩陣）中自訂藍/紅海洋閾值
 - 在步驟 3（查看與自訂矩陣）中點擊個別儲存格以查看該儲存格內的專利與論文
 
-> **提示：** 根據 REST 最佳實務，PUT 用於替換整個資源或在資源不存在時建立新資源，PATCH 用於部分更新，POST 用於提交資料以建立或新增資源。_來源：[GeeksForGeeks](https://www.geeksforgeeks.org/java/what-is-the-difference-between-put-post-and-patch-in-restful-api/)_。
+> 實作說明：根據 REST 最佳實務，PUT 用於替換整個資源或在資源不存在時建立；PATCH 用於部分更新；POST 用於建立或新增資源。_來源：[GeeksForGeeks](https://www.geeksforgeeks.org/java/what-is-the-difference-between-put-post-and-patch-in-restful-api/)_。
 
-我們對於選擇、矩陣規格與矩陣最終化採用 `PATCH`，因為這些操作通常是部分更新（例如使用 `selectionConfirmed` 或 `specificationConfirmed` 旗標儲存進度，或更新視圖設定等欄位）。`PATCH` 允許彈性的部分變更，而不需 `PUT` 的整個資源替換。對於這些子資源的首次建立，`PATCH` 可被視為 upsert（若不存在則建立），避免不必要的 `POST` 端點，並保持 API 以專案為中心且簡潔。
+實作說明：在選擇階段、矩陣規格設定與矩陣最終化等操作，本系統預設使用 `PATCH` 做彈性、部分更新（例如以 `selectionConfirmed` 或 `specificationConfirmed` 儲存進度，或更新局部欄位如 view settings）。`PATCH` 支援 upsert（不存在則建立），避免為每個子資源提供額外的 `POST`，維持 API 的專案導向與簡潔性。
 
 ---
 
@@ -38,7 +38,7 @@
 
 Base URL: `/api/v1`
 
-依照 REST 最佳實務，API 以應用程式中的主要資源組織，對應使用者操作流程。
+設計說明：API 按主要資源建模以對應使用者操作流程（例如：查詢建立 → 選擇 → 指定矩陣 → 產生/匯出矩陣）。
 
 ### 資源：
 
@@ -88,7 +88,7 @@ Base URL: `/api/v1`
 - `GET /projects/{projectId}/share`：產生專案分享連結。任何擁有該連結的人可查看矩陣（視專案是否已最終化）。
 - `GET /projects/{projectId}`：查看（分享的）矩陣。未最終化的專案不可分享／檢視。
 - `PUT /projects/{projectId}/view-settings`：儲存／更新使用者的矩陣視圖設定（如藍海／紅海閾值）。預設使用建立者的設定。
-  > 注意：此處選擇 `PUT` 而非 `PATCH` 或 `POST`，表明視圖設定是替換整個資源或在不存在時建立。
+  > 設計說明：此處採用 `PUT` 而非 `PATCH` 或 `POST`，以明確視圖設定為整體替換（或在不存在時建立）。如需部分更新請使用 `PATCH`。
 
 **專案清單與管理：**
 
@@ -106,8 +106,8 @@ Base URL: `/api/v1`
 interface APIResponse<T = any> {
   status: "success" | "error";
   code: number;
-  timestamp: string; // ISO 8601 timestamp
-  apiVersion: string; // e.g., "v1.0"
+  timestamp: string; // ISO 8601 時間戳
+  apiVersion: string; // 例如 "v1.0"
   data?: T;
   error?: APIError;
 }
@@ -125,7 +125,7 @@ interface APIError {
 interface ValidationErrorDetail {
   field?: string;
   message: string;
-  //   position?: number;
+  //   position?: number; // 位置（可選）
 }
 
 type ErrorType =
@@ -168,7 +168,7 @@ Response:
     "sessionToken": string,
     "userId": string,
     "username": string,
-    "expiresInHours": number // Frontend can use this to set token expiry time, and auto-logout accordingly
+    "expiresInHours": number // 前端可使用此值設定 token 過期時間並自動登出
   }
 }
 ```
@@ -179,7 +179,7 @@ Request:
 
 ```json
 {
-  // No body needed, just Auth header with session token
+  // 無需 body，只需在 Authorization 標頭中提供 session token
 }
 ```
 
@@ -201,7 +201,7 @@ Request:
 
 ```json
 {
-  // None
+  // 無
 }
 ```
 
@@ -221,7 +221,7 @@ Response:
 
 Request:
 
-> Note: The user ID is obtained from the session token in Auth header.
+> 實作說明：後端由 Authorization 標頭內的 session token 解析並取得使用者 ID。
 
 ```json
 {
@@ -230,7 +230,7 @@ Request:
   "yearRange": {
     "start": number,
     "end": number
-  } // optional, default to last 5 years
+  } // 可選，預設為最近 5 年
 }
 ```
 
@@ -288,7 +288,7 @@ Response:
       "patent": PatentSortKey[],
       "paper": PaperSortKey[]
     },
-    "createdAt": string // ISO 8601 timestamp
+    "createdAt": string // ISO 8601 時間戳
   }
 }
 ```
@@ -353,7 +353,7 @@ Request:
 {
   "selectedPatentIds": string[],
   "selectedPaperIds": string[],
-  /// --- For saving user progress
+  /// --- 用於儲存使用者進度
   "selectedTab": "patent" | "paper",
   "filterSettings": {
     "patentFilterSettings": {
@@ -398,9 +398,9 @@ Request:
     }
   },
   /// ---
-  "selectionConfirmed": false // whether user confirms selections to advance project state
-                // If true, prepare AI suggestions for matrix dimensions
-                // If false, just save selections
+  "selectionConfirmed": false // 是否確認選擇以推進專案狀態
+                // 若為 true，準備矩陣維度的 AI 建議
+                // 若為 false，僅儲存選擇
 
 }
 ```
@@ -423,7 +423,7 @@ Request:
 ```json
 {
   // ... same as above...,
-  "selectionConfirmed": true // Every time the backend receives true, it re-generates AI suggestions for matrix dimensions.
+  "selectionConfirmed": true // 每次後端收到 true 都會重新生成矩陣規格的 AI 建議。
 }
 ```
 
@@ -440,6 +440,8 @@ Response:
     }
   }
 }
+
+> 實作說明：當前流程設計為同步回傳 AI 建議，適用於中小規模資料集。若使用情境有大量資料或耗時運算，建議改採非同步作業（回傳 job id，後續以 job id 查詢進度/結果）。
 ```
 
 #### 步驟 2：指定矩陣維度
@@ -450,13 +452,13 @@ Request:
 
 ```json
 {
-  /// --- For saving user progress
-  "functionLabels": string[], // The order of labels matters
+  /// --- 用於儲存使用者進度
+  "functionLabels": string[], // 標籤順序很重要
   "technologyLabels": string[],
   /// ---
-  "specificationConfirmed": false // whether user confirms matrix spec to generate matrix
-                  // If true, generate matrix based on selected patents/papers and specified dimensions
-                  // If false, just save dimensions
+  "specificationConfirmed": false // 是否確認矩陣規格以產生矩陣
+                  // 若為 true，根據所選專利/論文與指定維度產生矩陣
+                  // 若為 false，僅儲存維度
 }
 ```
 
@@ -491,8 +493,8 @@ Response:
   "data": {
     // "projectId": string,
     /// ---
-    // Note: frontend already has functionLabels and technologyLabels from request; however, backend needs to respect the orders sent by frontend.
-    // Otherwise, backend needs to return the labels in order again here.
+    // 說明：前端請求已包含 `functionLabels` 與 `technologyLabels`，後端應依該順序處理。
+    // 若後端調整順序，請在回應中維持並回傳一致順序以避免前後端混淆。
     // "functionLabels": string[],
     // "technologyLabels": string[],
     /// ---
@@ -505,7 +507,7 @@ Response:
       },
       {...}, ...
     ],
-    // "createdAt": string // ISO 8601 timestamp
+    // "createdAt": string // ISO 8601 時間戳
   }
 }
 ```
@@ -544,7 +546,7 @@ Request:
 
 ```json
 {
-  // No body needed, just projectId in URL
+  // 無需 body，projectId 在 URL
 }
 ```
 
@@ -560,7 +562,7 @@ Request:
 
 ```json
 {
-  // No body needed, just userId and projectId in URL
+  // 無需 body，URL 中包含 userId 與 projectId
 }
 ```
 
@@ -573,19 +575,33 @@ Response:
     "projectTitle": string,
     "query": string,
     // ---
-    // same as in response from `POST /projects`
-    "patents": [ ... ],
-    "papers": [ ... ],
-    "filterOptions": { ... },
-    "sortOptions": { ... },
-    // ---
-    "currentProgress": {
-      "currentStep": "selection" | "specification" | "matrix",
+    // 與 `POST /projects` 的回應相同
+    "selectionBaseData": {
+      "patents": [ ... ],
+      "papers": [ ... ],
+      "filterOptions": { ... },
+      "sortOptions": { ... }
+    },
+    "specificationBaseData": {
+      "functionLabels": string[],
+      "technologyLabels": string[]
+    } | null, // 若 currentStep 為 "selection" 則為 null
+    "matrixBaseData": {
+      "cells": [
+        {
+          "functionIndex": number,
+          "technologyIndex": number,
+          "patentIds": string[],
+          "paperIds": string[]
+        },
+        {...}, ...
+      ]
+    } | null, // 若 currentStep 為 "selection" 或 "specification" 則為 null
+    "userProgress": {
       "selection": {
-        // Similar to "Step 1. Select Patents and "Papers"
-          // `PATCH /projects/{projectId}/selections` with `selectionConfirmed: false` requet body
-        "selectedPatentIds": string[],
-        "selectedPaperIds": string[],
+        // 與「步驟 1：選擇專利與論文」相似
+        "selectedPatentIds": string[], // 若使用者尚未選擇則為空的陣列
+        "selectedPaperIds": string[], // 若使用者尚未選擇則為空的陣列
         "selectedTab": "patent" | "paper",
         "filterSettings": {
           "patentFilterSettings": {
@@ -617,36 +633,24 @@ Response:
           "patentSortSettings": {
             PatentSortKey: {
               "index": number | null,
-              "order": "ASC" | "DESC" | null,
+              "order": "ASC" | "DESC" | null
             }
             ...
           },
           "paperSortSettings": {
             PaperSortKey: {
               "index": number | null,
-              "order": "ASC" | "DESC" | null,
+              "order": "ASC" | "DESC" | null
             }
             ...
           }
-        },
-
+        }
       },
       "specification": {
         "functionLabels": string[],
         "technologyLabels": string[]
-      } | null, // null if currentStepCode is "selection"
-      "matrix": { // Note: unless user has finalized (and saved) the project, the view settings wouldn't be saved yet, so no need for backend to return them here.
-        "cells": [
-          {
-            "functionIndex": number,
-            "technologyIndex": number,
-            "patentIds": string[],
-            "paperIds": string[]
-          },
-          {...}, ...
-        ] | null // null if currentStepCode is "selection" or "specification"
-      }
-    },
+      } | null
+    }
   }
 }
 ```
@@ -659,7 +663,7 @@ Request:
 
 ```json
 {
-  // No body needed, just projectId in URL
+  // 無需 body，projectId 在 URL
 }
 ```
 
@@ -669,7 +673,7 @@ Response:
 {
   ...APIResponse,
   "data": {
-    "shareableLink": string // URL to view the shared matrix
+    "shareableLink": string // 用於檢視共享矩陣的 URL
   }
 }
 ```
@@ -678,11 +682,11 @@ Response:
 
 Request:
 
-> Note: Backend identify the user from session token in Auth header. If the user has her view preferences (i.e., blue/red ocean thresholds) saved, return those settings; otherwise, return the creator's preferences by default.
+> 實作說明：後端由 Authorization 標頭內的 session token 解析使用者身分。若該使用者已儲存檢視偏好（例如藍海/紅海閾值），系統優先回傳該偏好；否則以建立者設定為預設值。
 
 ```json
 {
-  // No body needed, just projectId in URL
+  // 無需 body，projectId 在 URL
 }
 ```
 
@@ -695,8 +699,8 @@ Response:
     // "projectId": string,
     "projectTitle": string,
     "query": string,
-    "patents": [ ... ], // Only selected patents
-    "papers": [ ... ], // Only selected papers
+    "patents": [ ... ], // 僅包含已選定的專利
+    "papers": [ ... ], // 僅包含已選定的論文
     "functionLabels": string[],
     "technologyLabels": string[],
     "cells": [
@@ -712,7 +716,7 @@ Response:
       "blueOceanThreshold": number,
       "redOceanThreshold": number
     },
-    "createdAt": string // ISO 8601 timestamp
+    "createdAt": string // ISO 8601 時間戳
   }
 }
 ```
@@ -721,7 +725,7 @@ Response:
 
 Request:
 
-> Note: Backend identify the user from session token in Auth header.
+> 實作說明：後端由 Authorization 標頭內的 session token 解析使用者身分，供授權與偏好處理使用。
 
 ```json
 {
@@ -736,11 +740,11 @@ Request:
 
 Request:
 
-> Note: Backend identify the user from session token in Auth header.
+> 實作說明：後端由 Authorization 標頭內的 session token 解析使用者身分，供授權與偏好處理使用。
 
 ```json
 {
-  // No body needed, just Auth header with session token
+  // 無需 body，只需在 Authorization 標頭中提供 session token
 }
 ```
 
@@ -754,7 +758,7 @@ Response:
       {
         "projectId": string,
         "projectTitle": string,
-        "createdAt": string, // ISO 8601 timestamp; Frontend can use this to sort projects by creation date
+        "createdAt": string, // ISO 8601 時間戳；前端可使用此值以建立時間排序專案
         "status": "OPEN" | "COMPLETED"
       },
       {...}, ...
@@ -767,7 +771,7 @@ Response:
 
 Request:
 
-> Note: Backend identify the user from session token in Auth header.
+> 實作說明：後端由 Authorization 標頭內的 session token 解析使用者身分，供授權與偏好處理使用。
 
 ```json
 {
@@ -787,11 +791,11 @@ Response:
 
 Request:
 
-> Note: Backend identify the user from session token in Auth header.
+> 實作說明：後端由 Authorization 標頭內的 session token 解析使用者身分，供授權與偏好處理使用。
 
 ```json
 {
-  // No body needed, just userId and projectId in URL
+  // 無需 body，URL 中包含 userId 與 projectId
 }
 ```
 

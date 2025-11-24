@@ -635,20 +635,37 @@ Response:
     "data": {
         "projectTitle": string,
         "query": string,
+        "currentStep": "selection" | "specification" | "matrix",
+        "selectionBaseData": {
         // ---
         // same as in response from `POST /projects`
-        "patents": [ ... ],
-        "papers": [ ... ],
-        "filterOptions": { ... },
-        "sortOptions": { ... },
+            "patents": [ ... ],
+            "papers": [ ... ],
+            "filterOptions": { ... },
+            "sortOptions": { ... },
         // ---
-        "currentProgress": {
-            "currentStep": "selection" | "specification" | "matrix",
+        },
+        "specificationBaseData": {
+            "functionLabels": string[],
+            "technologyLabels": string[]
+        } | null, // null if "currentStep" is "selection"
+        "matrixBaseData": {
+            "cells": [
+                {
+                    "functionIndex": number,
+                    "technologyIndex": number,
+                    "patentIds": string[],
+                    "paperIds": string[]
+                },
+                {...}, ...
+            ]
+        } | null, // null if "currentStep" is "selection" or "specification"
+        "userProgress": {
             "selection": {
                 // Similar to "Step 1. Select Patents and "Papers"
-                    // `PATCH /projects/{projectId}/selections` with `selectionConfirmed: false` requet body
-                "selectedPatentIds": string[],
-                "selectedPaperIds": string[],
+                    // `PATCH /projects/{projectId}/selections` with `selectionConfirmed: false` request body
+                "selectedPatentIds": string[], // empty if user hasn't made any selection yet
+                "selectedPaperIds": string[], // empty if user hasn't made any selection yet
                 "selectedTab": "patent" | "paper",
                 "filterSettings": {
                     "patentFilterSettings": {
@@ -698,17 +715,6 @@ Response:
                 "functionLabels": string[],
                 "technologyLabels": string[]
             } | null, // null if currentStepCode is "selection"
-            "matrix": { // Note: unless user has finalized (and saved) the project, the view settings wouldn't be saved yet, so no need for backend to return them here.
-                "cells": [
-                    {
-                        "functionIndex": number,
-                        "technologyIndex": number,
-                        "patentIds": string[],
-                        "paperIds": string[]
-                    },
-                    {...}, ...
-                ] | null // null if currentStepCode is "selection" or "specification"
-            }
         },
     }
 }
