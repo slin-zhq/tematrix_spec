@@ -854,7 +854,7 @@ Response:
 }
 ```
 
-**`DELETE /users/{userId}/projects/{projectId}`: Delete a project.**
+**`DELETE /users/me/projects/{projectId}`: Delete a project.**
 
 Request:
 

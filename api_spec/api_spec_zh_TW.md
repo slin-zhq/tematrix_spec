@@ -787,7 +787,7 @@ Response:
 }
 ```
 
-**`DELETE /users/{userId}/projects/{projectId}`：刪除專案。**
+**`DELETE /users/me/projects/{projectId}`：刪除專案。**
 
 Request:
 
