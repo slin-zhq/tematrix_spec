@@ -574,6 +574,7 @@ Response:
   "data": {
     "projectTitle": string,
     "query": string,
+    "currentStep": "selection" | "specification" | "matrix",
     // ---
     // 與 `POST /projects` 的回應相同
     "selectionBaseData": {
