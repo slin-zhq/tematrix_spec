@@ -229,6 +229,7 @@ Response:
         "sessionToken": string,
         "userId": string,
         "username": string,
+        "displayName": string,
         "expiresInHours": number // Frontend can use this to set token expiry time, and auto-logout accordingly
     }
 }
