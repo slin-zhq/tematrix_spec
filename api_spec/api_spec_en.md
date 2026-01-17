@@ -291,7 +291,9 @@ Request:
     "yearRange": {
         "start": number,
         "end": number
-    } // optional, default to last 5 years
+    }, // optional, default to last 5 years
+    "num": number,
+    "max_pages": number
 }
 ```
 
@@ -635,6 +637,14 @@ Response:
     "data": {
         "projectTitle": string,
         "query": string,
+        "yearRange": {
+            "start": number,
+            "end": number
+        },
+        "paginationSettings": {
+            "num": number,
+            "max_pages": number
+        },
         "currentStep": "selection" | "specification" | "matrix",
         "selectionBaseData": {
         // ---
@@ -764,6 +774,14 @@ Response:
         // "projectId": string,
         "projectTitle": string,
         "query": string,
+        "yearRange": {
+            "start": number,
+            "end": number
+        },
+        "paginationSettings": {
+            "num": number,
+            "max_pages": number
+        },
         "patents": [ ... ], // Only selected patents
         "papers": [ ... ], // Only selected papers
         "functionLabels": string[],
